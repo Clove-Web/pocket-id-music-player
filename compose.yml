@@ -1,0 +1,19 @@
+services:
+  music:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: music
+    ports:
+      - "127.0.0.1:4060:4060"
+    volumes:
+      - "./.env:/app/.env:ro"
+      - "./.env.keys:/app/.env.keys:ro"
+      - "./music-data:/app/data"
+    networks:
+      - infra
+    restart: unless-stopped
+
+networks:
+  infra:
+    external: true
