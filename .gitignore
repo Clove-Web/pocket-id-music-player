@@ -3,3 +3,4 @@ data/
 .env
 .env.keys
 node_modules/
+.DS_Store
