@@ -24,7 +24,7 @@ export const config = {
   redisUrl: required("MUSIC_REDIS_URL"), // shared with the other services
 
   oidc: {
-    issuer: required("OIDC_ISSUER").replace(/\/$/, ""), // shared PocketID
+    issuer: required("MUSIC_OIDC_ISSUER").replace(/\/$/, ""), // shared PocketID
     clientId: required("MUSIC_OIDC_CLIENT_ID"), // dedicated music client
     clientSecret: required("MUSIC_OIDC_CLIENT_SECRET"),
     redirectUri: `${appUrl}/api/auth/callback`, // derived, not a separate var
