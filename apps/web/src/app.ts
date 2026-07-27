@@ -284,7 +284,7 @@ function renderSidebar(): void {
     .join("");
 
   el.innerHTML = `
-    <div class="brand">Music</div>
+    <div class="brand">Doughmination Music</div>
     ${nav("library", "Library")}
     <button class="nav-link" id="upload-btn">
       <i class="bi bi-cloud-arrow-up"></i> Upload
