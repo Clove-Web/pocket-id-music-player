@@ -1,12 +1,10 @@
 FROM oven/bun:1 AS base
 WORKDIR /app
 
-COPY package.json bun.lock* ./
+COPY . .
 RUN bun install
 
-COPY . .
-
-# Bundle the frontend (web/app.ts -> dist/app.js).
+# Bundle the frontend (apps/web/src/app.ts -> apps/web/dist/app.js).
 RUN bun run build
 
 RUN bun install -g @dotenvx/dotenvx

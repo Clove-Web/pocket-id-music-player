@@ -3,8 +3,18 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "music-server",
+      "name": "music-monorepo",
+      "devDependencies": {
+        "@types/bun": "^1.3.14",
+        "concurrently": "^9.2.4",
+        "typescript": "^5.9.3",
+      },
+    },
+    "apps/server": {
+      "name": "@musicapp/server",
+      "version": "0.1.0",
       "dependencies": {
+        "@musicapp/shared": "workspace:*",
         "hono": "^4.12.32",
         "ioredis": "^5.11.1",
         "jose": "^5.10.0",
@@ -13,7 +23,36 @@
       },
       "devDependencies": {
         "@types/bun": "^1.3.14",
-        "concurrently": "^9.2.4",
+        "typescript": "^5.9.3",
+      },
+    },
+    "apps/web": {
+      "name": "@musicapp/web",
+      "version": "0.1.0",
+      "dependencies": {
+        "@musicapp/player": "workspace:*",
+        "@musicapp/shared": "workspace:*",
+        "@tauri-apps/api": "^2",
+        "music-metadata": "^10.9.1",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
+    "packages/player": {
+      "name": "@musicapp/player",
+      "version": "0.1.0",
+      "dependencies": {
+        "@musicapp/shared": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
+    "packages/shared": {
+      "name": "@musicapp/shared",
+      "version": "0.1.0",
+      "devDependencies": {
         "typescript": "^5.9.3",
       },
     },
@@ -23,7 +62,17 @@
 
     "@ioredis/commands": ["@ioredis/commands@1.10.0", "", {}, "sha512-UmeW7z4LfctwoQ5wkhVzgq8tXkreED2xZGpX+Bg+zA+WJFZCT6c062AfCK/Dfk81xZnnwdhJCUMkitihRaoC2Q=="],
 
+    "@musicapp/player": ["@musicapp/player@workspace:packages/player"],
+
+    "@musicapp/server": ["@musicapp/server@workspace:apps/server"],
+
+    "@musicapp/shared": ["@musicapp/shared@workspace:packages/shared"],
+
+    "@musicapp/web": ["@musicapp/web@workspace:apps/web"],
+
     "@sec-ant/readable-stream": ["@sec-ant/readable-stream@0.4.1", "", {}, "sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg=="],
+
+    "@tauri-apps/api": ["@tauri-apps/api@2.11.1", "", {}, "sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA=="],
 
     "@tokenizer/token": ["@tokenizer/token@0.3.0", "", {}, "sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A=="],
 

@@ -1,23 +1,20 @@
 {
-  "name": "music-server",
+  "name": "music-monorepo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "concurrently -k -n api,web \"bun run dev:api\" \"bun run dev:web\"",
-    "dev:api": "bun run --hot src/server.ts",
-    "dev:web": "bun build web/app.ts --outdir dist --watch",
-    "build": "bun build web/app.ts --outdir dist --minify",
-    "start": "NODE_ENV=production bun run src/server.ts",
-    "migrate": "bun run src/db/migrate.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "hono": "^4.12.32",
-    "ioredis": "^5.11.1",
-    "jose": "^5.10.0",
-    "music-metadata": "^10.9.1",
-    "postgres": "^3.4.9"
+    "dev": "concurrently -k -n api,web \"bun run --filter @musicapp/server dev\" \"bun run --filter @musicapp/web dev\"",
+    "build": "bun run --filter @musicapp/web build",
+    "start": "bun run --filter @musicapp/server start",
+    "migrate": "bun run --filter @musicapp/server migrate",
+    "typecheck": "bun run --filter '*' typecheck",
+    "desktop:dev": "cd apps/desktop/src-tauri && cargo tauri dev",
+    "desktop:build": "cd apps/desktop/src-tauri && cargo tauri build"
   },
   "devDependencies": {
     "concurrently": "^9.2.4",
