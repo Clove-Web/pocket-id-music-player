@@ -70,7 +70,6 @@ macro_rules! c_enum {
     };
 }
 
-pub(crate) use c_enum;
 
 c_enum! {
     /// How a user is being invited to an activity.
