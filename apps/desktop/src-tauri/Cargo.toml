@@ -1,0 +1,26 @@
+[package]
+name = "musicapp-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Rust bindings to the Discord Social SDK (safe wrapper crate).
+# Repo: https://github.com/SafeShows/discord_social_sdk
+# You must separately download the prebuilt SDK from the Discord Developer
+# Portal — see the note above the discord_social_sdk/ folder in this crate.
+discord_social_sdk = { git = "https://github.com/SafeShows/discord_social_sdk", package = "discord_social_sdk" }
+
+# Upstream's ActivityGamePlatforms/ErrorKind::Other assume the SDK's raw
+# bitmask type is i32; bindgen emits u32 for it on this target, which fails
+# to compile. Patched locally in vendor/discord_social_sdk until fixed
+# upstream — see the comment at the top of that crate's Cargo.toml.
+[patch."https://github.com/SafeShows/discord_social_sdk"]
+discord_social_sdk = { path = "../../../vendor/discord_social_sdk/crates/discord_social_sdk" }
+discord_social_sdk_sys = { path = "../../../vendor/discord_social_sdk/crates/discord_social_sdk_sys" }
