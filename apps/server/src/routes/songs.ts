@@ -26,6 +26,8 @@ import {
   resolveMedia,
   saveAudio,
   saveCover,
+  mimeForAudioPath,
+  mimeForCoverPath,
 } from "../lib/media.ts";
 
 export const songRoutes = new Hono<AppEnv>();
@@ -148,7 +150,10 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
   if (!info) return c.json({ error: "file_missing" }, 404);
 
   const total = info.size;
-  const mime = song.mime ?? "audio/mpeg";
+  const mime =
+      song.mime && song.mime.startsWith("audio/")
+        ? song.mime
+        : mimeForAudioPath(song.file_path);
   const range = c.req.header("range");
 
   if (!range) {
@@ -208,9 +213,9 @@ songRoutes.get("/:id/cover", requireAuth, async (c) => {
 
   return new Response(Bun.file(abs).stream(), {
     headers: {
-      "content-type": "image/*",
-      "cache-control": "public, max-age=86400",
-    },
+          "content-type": mimeForCoverPath(song.cover_path),
+          "cache-control": "public, max-age=86400",
+        },
   });
 });
 
