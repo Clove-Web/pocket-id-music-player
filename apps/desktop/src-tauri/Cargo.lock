@@ -685,6 +685,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "doughmination-music"
+version = "0.1.0"
+dependencies = [
+ "discord_social_sdk",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "dpi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1825,17 +1836,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.19",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "musicapp-desktop"
-version = "0.1.0"
-dependencies = [
- "discord_social_sdk",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
 ]
 
 [[package]]
