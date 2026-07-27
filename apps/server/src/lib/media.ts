@@ -18,6 +18,37 @@ const MEDIA_ROOT = resolve(config.mediaDir);
 const AUDIO_DIR = join(MEDIA_ROOT, "audio");
 const COVER_DIR = join(MEDIA_ROOT, "covers");
 
+// Extension -> MIME lookups.
+const AUDIO_MIME: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".mp4": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".opus": "audio/opus",
+  ".weba": "audio/webm",
+};
+
+const IMAGE_MIME: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".avif": "image/avif",
+};
+
+export function mimeForAudioPath(relPath: string): string {
+  return AUDIO_MIME[extname(relPath).toLowerCase()] ?? "application/octet-stream";
+}
+
+export function mimeForCoverPath(relPath: string): string {
+  return IMAGE_MIME[extname(relPath).toLowerCase()] ?? "image/jpeg";
+}
+
 export async function ensureMediaDirs(): Promise<void> {
   await mkdir(AUDIO_DIR, { recursive: true });
   await mkdir(COVER_DIR, { recursive: true });
