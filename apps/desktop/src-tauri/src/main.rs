@@ -10,7 +10,7 @@ use tauri::{Manager, State};
 
 // TODO: replace with your own Discord application ID from
 // https://discord.com/developers/applications — Rich Presence tab.
-const DISCORD_APPLICATION_ID: u64 = 0;
+const DISCORD_APPLICATION_ID: u64 = 1531083200548438036;
 
 struct DiscordHandle(Mutex<Sender<PresenceUpdate>>);
 
