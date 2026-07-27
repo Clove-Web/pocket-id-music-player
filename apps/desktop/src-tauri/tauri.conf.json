@@ -5,7 +5,8 @@
   "identifier": "uk.doughmination.music.desktop",
   "build": {
     "frontendDist": "../../web/dist",
-    "beforeDevCommand": "bun run --filter @musicapp/web build",
+    "devUrl": "https://doughmination.me",
+    "beforeDevCommand": "",
     "beforeBuildCommand": "bun run --filter @musicapp/web build"
   },
   "app": {
