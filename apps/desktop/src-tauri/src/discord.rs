@@ -7,14 +7,6 @@
 // desktop client is running locally — see "Rich Presence Without
 // Authentication" in Discord's docs. We only ever call SetApplicationId +
 // UpdateRichPresence, nothing that needs a signed-in session.
-//
-// NOTE: exact method names below (set_application_id / update_rich_presence
-// / clear_rich_presence, Activity's setters) are the Rust wrapper's mapping
-// of the C++ SDK — https://docs.discord.com/developers/discord-social-sdk.
-// The crate publishes its generated docs on GitHub Pages, not docs.rs
-// (https://safeshows.github.io/discord_social_sdk/), because it can't be
-// built without Discord's SDK headers. Run `cargo doc --open` locally once
-// the SDK is downloaded and cross-check these names before you build.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::thread;
@@ -22,7 +14,7 @@ use std::time::Duration;
 
 use discord_social_sdk::{
     activity::{Activity, ActivityTimestamps},
-    enums::ActivityTypes,
+    enums::ActivityType,
     Client,
 };
 
@@ -47,29 +39,32 @@ pub fn spawn(application_id: u64, rx: Receiver<PresenceUpdate>) {
             match rx.try_recv() {
                 Ok(PresenceUpdate::NowPlaying { title, artist, album, duration_s }) => {
                     let mut activity = Activity::new();
-                    activity.set_type(ActivityTypes::Listening);
-                    activity.set_details(Some(title));
+                    activity.set_activity_type(ActivityType::Listening);
+                    activity.set_details(Some(&title));
+
                     let state = match album {
                         Some(album) => format!("{artist} — {album}"),
                         None => artist,
                     };
-                    activity.set_state(Some(state));
+                    activity.set_state(Some(&state));
 
                     if let Some(duration_s) = duration_s {
-                        let now = std::time::SystemTime::now()
+                        let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
-                            .as_secs();
+                            .as_millis() as u64;
+                        let end_ms = now_ms + (duration_s * 1000.0) as u64;
+
                         let mut timestamps = ActivityTimestamps::new();
-                        timestamps.set_start(Some(now));
-                        timestamps.set_end(Some(now + duration_s as u64));
-                        activity.set_timestamps(Some(timestamps));
+                        timestamps.set_start(now_ms);
+                        timestamps.set_end(end_ms);
+                        activity.set_timestamps(Some(&timestamps));
                     }
 
-                    client.update_rich_presence(activity, |_result| {});
+                    client.update_rich_presence(&mut activity, |_result| {});
                 }
                 Ok(PresenceUpdate::Clear) => {
-                    client.clear_rich_presence(|_result| {});
+                    client.clear_rich_presence();
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => break,
