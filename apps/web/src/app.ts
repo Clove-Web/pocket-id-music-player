@@ -250,7 +250,7 @@ function renderLogin(): void {
     <div class="login">
       <h1>Music</h1>
       <p>Sign in with your passkey to continue.</p>
-      <a class="btn btn-primary" href="/api/auth/login">Sign in with PocketID</a>
+      <a class="btn btn-primary" href="/api/auth/login">🔑 Sign in with SSO</a>
     </div>
   `;
 }
