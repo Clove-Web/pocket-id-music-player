@@ -31,29 +31,42 @@ export const isDesktop =
   typeof window !== "undefined" &&
   (!!window.__TAURI__ || !!window.__TAURI_INTERNALS__);
 
+// True when the frontend is served from Tauri's own bundled content
+// (tauri://localhost, or http://tauri.localhost on Windows) rather than from
+// a real https origin. Only then is the API cross-origin and a base URL
+// needed. When the app loads a remote devUrl (e.g. https://doughmination.me)
+// the webview origin already IS the server, so calls are same-origin.
+function isLocalBundledOrigin(): boolean {
+  if (typeof location === "undefined") return true;
+  return location.protocol === "tauri:" || location.hostname === "tauri.localhost";
+}
+
 // Call once, before the first api.* call. Web is same-origin and this is a
-// no-op there. Desktop has no origin to inherit, so it asks the user for
-// their self-hosted server URL once and remembers it.
+// no-op there. A remote-loaded desktop webview is *also* same-origin with the
+// API, so it skips the prompt too. Only a locally-bundled desktop build needs
+// to be told where its self-hosted server lives.
 export function initDesktopBridge(): void {
   if (!isDesktop) return;
 
-  let serverUrl = "";
-  try {
-    serverUrl = localStorage.getItem(SERVER_URL_KEY) ?? "";
-  } catch {
-    /* ignore */
-  }
-
-  if (!serverUrl) {
-    serverUrl = window.prompt("Server URL (e.g. https://music.example.com)") ?? "";
+  if (isLocalBundledOrigin()) {
+    let serverUrl = "";
     try {
-      if (serverUrl) localStorage.setItem(SERVER_URL_KEY, serverUrl);
+      serverUrl = localStorage.getItem(SERVER_URL_KEY) ?? "";
     } catch {
       /* ignore */
     }
-  }
 
-  if (serverUrl) configureApiBase(serverUrl);
+    if (!serverUrl) {
+      serverUrl = window.prompt("Server URL (e.g. https://music.example.com)") ?? "";
+      try {
+        if (serverUrl) localStorage.setItem(SERVER_URL_KEY, serverUrl);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (serverUrl) configureApiBase(serverUrl);
+  }
 
   // Restore a previously-issued bearer token so the session survives restarts.
   // (localStorage is fine for a self-hosted desktop app; swap for the OS
