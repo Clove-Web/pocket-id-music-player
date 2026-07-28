@@ -1,5 +1,6 @@
 services:
   music:
+    user: 1000:1002
     build:
       context: .
       dockerfile: Dockerfile
