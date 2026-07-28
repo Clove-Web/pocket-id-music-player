@@ -53,9 +53,22 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          # libfuse2 lets the AppImage tooling (linuxdeploy) run; without it the
-          # bundle step fails with "failed to run linuxdeploy".
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+          # libfuse2: lets the AppImage tooling (linuxdeploy) run at all.
+          # gstreamer*: Tauri's AppImage build runs linuxdeploy-plugin-gstreamer
+          #   (webkit2gtk uses gstreamer for HTML5 <audio>); without gstreamer
+          #   installed that plugin errors and linuxdeploy fails.
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libfuse2 \
+            libgtk-3-dev \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-libav
 
       - run: bun install
 
@@ -74,4 +87,6 @@ jobs:
           releaseName: "Music Desktop ${{ inputs.version || github.ref_name }}"
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          # --verbose surfaces the underlying linuxdeploy/bundler output so a
+          # failure shows the real error instead of just "failed to run …".
+          args: ${{ matrix.args }} --verbose
