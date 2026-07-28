@@ -81,18 +81,25 @@ const webDist = join(import.meta.dir, "../../web/dist");
 const webSrc = join(import.meta.dir, "../../web/src");
 const serverPublic = join(import.meta.dir, "../public");
 
-async function serveFile(path: string): Promise<Response> {
+async function serveFile(path: string, cacheControl?: string): Promise<Response> {
   const file = Bun.file(path);
   if (!(await file.exists())) return new Response("Not found", { status: 404 });
-  return new Response(file);
+  const headers = cacheControl ? { "cache-control": cacheControl } : undefined;
+  return new Response(file, headers ? { headers } : undefined);
 }
 
-app.get("/app.js", () => serveFile(join(webDist, "app.js")));
-app.get("/styles.css", () => serveFile(join(webSrc, "styles.css")));
+// The bundle filename isn't content-hashed, so tell clients to revalidate
+// every load rather than trust a heuristic cache. Without this the Tauri
+// (WKWebView) shell kept serving a stale app.js across deploys — the browser
+// showed the new UI while the desktop app ran old code. "no-cache" still
+// allows a 304, so it's cheap: it just forbids using a cached copy blind.
+app.get("/app.js", () => serveFile(join(webDist, "app.js"), "no-cache"));
+app.get("/styles.css", () => serveFile(join(webSrc, "styles.css"), "no-cache"));
 app.get("/favicon.png", () => serveFile(join(serverPublic, "favicon.png")));
 
-// SPA fallback: any non-API route returns index.html.
-app.get("*", () => serveFile(join(webSrc, "index.html")));
+// SPA fallback: any non-API route returns index.html. Also no-cache, so a
+// stale shell can't keep pointing the webview at an old asset.
+app.get("*", () => serveFile(join(webSrc, "index.html"), "no-cache"));
 
 console.log(`Music server on ${config.appUrl} (port ${config.port})`);
 

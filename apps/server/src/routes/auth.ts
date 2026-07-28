@@ -138,7 +138,11 @@ authRoutes.get("/callback", async (c) => {
     });
     const dest = new URL(hs.native.redirect);
     dest.searchParams.set("code", exchange);
-    return c.redirect(dest.toString());
+    // NB: return an interstitial, NOT a 302 to the custom scheme. Browsers
+    // routinely block a server-initiated redirect to a non-http(s) protocol
+    // unless it's driven by a user gesture, so we auto-attempt the hand-off
+    // AND give a button the user can click if the browser held it back.
+    return c.html(returnToAppPage(dest.toString()));
   }
 
   // Web flow: httpOnly session cookie + back to the app.
@@ -200,3 +204,43 @@ authRoutes.post("/logout-all", requireAuth, async (c) => {
   const url = await endSessionUrl();
   return c.json({ ok: true, endSession: url ?? null });
 });
+
+// Post-login hand-off page for native clients. Auto-tries the deeplink on
+// load; the button is the reliable path when the browser requires a user
+// gesture to open a custom-scheme URL. `deeplink` is server-built from an
+// allowlisted scheme + a base64url code, but we still escape defensively.
+function returnToAppPage(deeplink: string): string {
+  const attr = deeplink.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  const js = JSON.stringify(deeplink);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Return to Doughmination Music</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0b0b0f;
+           color: #eee; display: grid; place-items: center; height: 100vh;
+           margin: 0; text-align: center; }
+    .card { max-width: 22rem; padding: 2rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 .5rem; }
+    p { color: #9aa; margin: 0 0 1.5rem; line-height: 1.5; }
+    a.btn { display: inline-block; background: #7c3aed; color: #fff;
+            text-decoration: none; padding: .8rem 1.6rem; border-radius: 9999px;
+            font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>You're signed in ✅</h1>
+    <p>Head back to the Doughmination Music app to finish. If it doesn't open
+       automatically, tap below.</p>
+    <a class="btn" href="${attr}">Open Doughmination Music</a>
+  </div>
+  <script>
+    // Best-effort auto hand-off; the button covers gesture-gated browsers.
+    try { window.location.href = ${js}; } catch (e) {}
+  </script>
+</body>
+</html>`;
+}
