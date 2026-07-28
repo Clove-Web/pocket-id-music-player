@@ -57,15 +57,16 @@ jobs:
           # gstreamer*: Tauri's AppImage build runs linuxdeploy-plugin-gstreamer
           #   (webkit2gtk uses gstreamer for HTML5 <audio>); without gstreamer
           #   installed that plugin errors and linuxdeploy fails.
+          # gstreamer *runtime* packages only — the -dev variants pull in
+          # libunwind-dev, which conflicts with the runner's preinstalled
+          # packages ("held broken packages"). The AppImage gstreamer plugin
+          # only needs the runtime libs/plugins present, not headers.
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
             libfuse2 \
-            libgtk-3-dev \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-libav
