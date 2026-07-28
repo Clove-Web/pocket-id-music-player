@@ -164,7 +164,12 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
   const cacheControl = "private, max-age=31536000, immutable";
 
   if (!range) {
-    return new Response(Bun.file(abs).stream(), {
+    // Pass the BunFile directly (not .stream()): Bun then sends a real
+    // Content-Length via efficient file streaming. With .stream() the response
+    // went out chunked with no length, so the browser couldn't size the file,
+    // couldn't range-seek, reported duration as Infinity (broken timer), and
+    // progressively downloaded the whole track before playing.
+    return new Response(Bun.file(abs), {
       headers: {
         "content-type": mime,
         "content-length": String(total),
@@ -185,8 +190,11 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
     });
   }
 
+  // The sliced BunFile is a Blob backed by the file; passing it directly lets
+  // Bun stream exactly those bytes with a correct Content-Length (see note
+  // above on why .stream() was wrong).
   const chunk = Bun.file(abs).slice(start, end + 1);
-  return new Response(chunk.stream(), {
+  return new Response(chunk, {
     status: 206,
     headers: {
       "content-type": mime,
@@ -220,11 +228,12 @@ songRoutes.get("/:id/cover", requireAuth, async (c) => {
   const info = await stat(abs).catch(() => null);
   if (!info) return c.json({ error: "not_found" }, 404);
 
-  return new Response(Bun.file(abs).stream(), {
+  return new Response(Bun.file(abs), {
     headers: {
-          "content-type": mimeForCoverPath(song.cover_path),
-          "cache-control": "public, max-age=86400",
-        },
+      "content-type": mimeForCoverPath(song.cover_path),
+      "content-length": String(info.size),
+      "cache-control": "public, max-age=86400",
+    },
   });
 });
 
