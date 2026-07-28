@@ -55,6 +55,11 @@ player.events.on("change", () => {
   renderPlayerBar();
   syncLyrics();
   checkScrobbleThreshold();
+  // Cheap: just keep the active row's play/pause (animation) state in sync.
+  // Which row is active is handled on trackchange, so no full sweep here.
+  document
+    .querySelector(".song.playing")
+    ?.classList.toggle("paused", !player.playing);
   const now = Date.now();
   if (now - lastSave > 2000) {
     lastSave = now;
@@ -87,6 +92,7 @@ function onTrackStarted(song: Song): void {
 player.events.on("trackchange", (song) => {
   onTrackStarted(song);
   void syncDiscordPresence(song);
+  highlightPlayingRow(); // move the now-playing bars to the new track's row
 });
 
 function checkScrobbleThreshold(): void {
@@ -1489,10 +1495,13 @@ function songTableHtml(songs: Song[], editablePlaylistId?: string): string {
         ? `<img class="cover" src="${s.coverUrl}" alt="" />`
         : `<div class="cover cover-empty"><i class="bi bi-music-note-beamed"></i></div>`;
 
-      // Spotify-style: cover doubles as the play button on hover.
+      // Spotify-style: cover doubles as the play button on hover. The animated
+      // bars overlay marks the currently-playing row (toggled via CSS classes
+      // in highlightPlayingRow()).
       const cover = `
         <div class="song-cover">
           ${art}
+          <div class="np-bars" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
           <button class="cover-play" data-play="${i}" title="Play">
             <i class="bi bi-play-fill"></i>
           </button>
@@ -1517,7 +1526,7 @@ function songTableHtml(songs: Song[], editablePlaylistId?: string): string {
         : "";
 
       return `
-        <div class="song" data-index="${i}">
+        <div class="song" data-index="${i}" data-song-id="${s.id}">
           ${cover}
           <div class="song-meta">
             <span class="song-title">${escapeHtml(s.title)}${badge}</span>
@@ -1537,7 +1546,7 @@ function wireSongList(editablePlaylistId?: string): void {
   document.querySelectorAll(".cover-play").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      player.playQueue(state.visibleSongs, Number((btn as HTMLElement).dataset.play));
+      playFromList(Number((btn as HTMLElement).dataset.play));
     });
   });
 
@@ -1545,7 +1554,7 @@ function wireSongList(editablePlaylistId?: string): void {
   document.querySelectorAll(".song").forEach((row) => {
     row.addEventListener("dblclick", (e) => {
       if ((e.target as HTMLElement).closest(".song-actions")) return;
-      player.playQueue(state.visibleSongs, Number((row as HTMLElement).dataset.index));
+      playFromList(Number((row as HTMLElement).dataset.index));
     });
   });
 
@@ -1593,6 +1602,32 @@ function wireSongList(editablePlaylistId?: string): void {
       await loadSongs();
       renderMain();
     });
+  });
+
+  // Reflect the current track on the freshly-rendered list.
+  highlightPlayingRow();
+}
+
+// Play a song from the visible list — but if it's already the current track,
+// toggle play/pause instead of restarting it from the top.
+function playFromList(index: number): void {
+  const song = state.visibleSongs[index];
+  if (song && player.current?.id === song.id) {
+    player.toggle();
+    return;
+  }
+  player.playQueue(state.visibleSongs, index);
+}
+
+// Add `.playing` (and `.paused` when stopped) to the row of the current track,
+// clearing it from all others. Drives the animated now-playing bars via CSS.
+function highlightPlayingRow(): void {
+  const currentId = player.current?.id ?? null;
+  const isPlaying = player.playing;
+  document.querySelectorAll<HTMLElement>(".song").forEach((row) => {
+    const isCurrent = currentId !== null && row.dataset.songId === currentId;
+    row.classList.toggle("playing", isCurrent);
+    row.classList.toggle("paused", isCurrent && !isPlaying);
   });
 }
 
