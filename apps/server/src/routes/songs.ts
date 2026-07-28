@@ -163,6 +163,20 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
   // get dropped aggressively. `private` because the endpoint is auth-gated.
   const cacheControl = "private, max-age=31536000, immutable";
 
+  // Offload to nginx if configured: we've authenticated, so hand the file off
+  // by internal redirect and let nginx do sendfile + range + caching. The app
+  // never touches the bytes — the big win for a large, multi-user library.
+  if (config.xaccelPrefix) {
+    return new Response(null, {
+      headers: {
+        "content-type": mime,
+        "cache-control": cacheControl,
+        "accept-ranges": "bytes",
+        "x-accel-redirect": `${config.xaccelPrefix}/${encodeURI(song.file_path)}`,
+      },
+    });
+  }
+
   if (!range) {
     // Pass the BunFile directly (not .stream()): Bun then sends a real
     // Content-Length via efficient file streaming. With .stream() the response
@@ -228,11 +242,24 @@ songRoutes.get("/:id/cover", requireAuth, async (c) => {
   const info = await stat(abs).catch(() => null);
   if (!info) return c.json({ error: "not_found" }, 404);
 
+  const coverCache = "public, max-age=86400";
+
+  // Offload to nginx if configured (see /stream note above).
+  if (config.xaccelPrefix) {
+    return new Response(null, {
+      headers: {
+        "content-type": mimeForCoverPath(song.cover_path),
+        "cache-control": coverCache,
+        "x-accel-redirect": `${config.xaccelPrefix}/${encodeURI(song.cover_path)}`,
+      },
+    });
+  }
+
   return new Response(Bun.file(abs), {
     headers: {
       "content-type": mimeForCoverPath(song.cover_path),
       "content-length": String(info.size),
-      "cache-control": "public, max-age=86400",
+      "cache-control": coverCache,
     },
   });
 });

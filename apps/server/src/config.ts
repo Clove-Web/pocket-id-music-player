@@ -92,6 +92,14 @@ export const config = {
   mediaDir: optional("MUSIC_MEDIA_DIR", "./data/media"),
   maxUploadBytes: Number(optional("MUSIC_MAX_UPLOAD_MB", "200")) * 1024 * 1024,
 
+  // Offload audio/cover byte-serving to nginx via X-Accel-Redirect. When set
+  // (e.g. "/_media"), /stream and /cover just authenticate then hand the file
+  // to nginx by internal-redirect, so the app never streams the bytes and
+  // nginx does sendfile + range + caching. The value must match an `internal`
+  // nginx location aliased to the media dir. Leave empty to stream from the
+  // app itself (the default; needed when there's no nginx in front, e.g. dev).
+  xaccelPrefix: optional("MUSIC_XACCEL_PREFIX", "").replace(/\/$/, ""),
+
   // Duplicate detection: a candidate scoring >= threshold is sent to the
   // admin review queue (see lib/duplicates.ts). Score is a sum of signal
   // weights, not a percentage, so the threshold is tuned against those
