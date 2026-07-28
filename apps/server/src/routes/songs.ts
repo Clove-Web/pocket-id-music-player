@@ -149,10 +149,17 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
   if (!info) return c.json({ error: "file_missing" }, 404);
 
   const total = info.size;
+  // Prefer the curated extension->MIME map over the browser-reported upload
+  // type (song.mime is often "audio/x-flac", "application/ogg", or empty,
+  // which can make players refuse or mis-handle FLAC/OGG). Fall back to the
+  // stored type only if the extension is unrecognised.
+  const extMime = mimeForAudioPath(song.file_path);
   const mime =
-      song.mime && song.mime.startsWith("audio/")
+    extMime !== "application/octet-stream"
+      ? extMime
+      : song.mime && song.mime.startsWith("audio/")
         ? song.mime
-        : mimeForAudioPath(song.file_path);
+        : extMime;
   const range = c.req.header("range");
 
   // The audio bytes for a given song id never change (an edit only touches
