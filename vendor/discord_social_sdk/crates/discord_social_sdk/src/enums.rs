@@ -203,13 +203,15 @@ impl ActivityGamePlatforms {
 
     /// Whether `platform` is present in the set.
     pub fn contains(self, platform: ActivityGamePlatform) -> bool {
-        let bit = platform.into_raw().0;
+        // Cast to u32 (self.0's type): the sys bitmask is u32 on macOS/Linux
+        // but c_int (i32) on Windows.
+        let bit = platform.into_raw().0 as u32;
         bit != 0 && self.0 & bit == bit
     }
 
     /// Add `platform` to the set.
     pub fn insert(&mut self, platform: ActivityGamePlatform) {
-        self.0 |= platform.into_raw().0;
+        self.0 |= platform.into_raw().0 as u32;
     }
 }
 
