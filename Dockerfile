@@ -7,11 +7,18 @@ RUN bun install
 # Bundle the frontend (apps/web/src/app.ts -> apps/web/dist/app.js).
 RUN bun run build
 
-RUN bun install -g @dotenvx/dotenvx
+# dotenvx is a normal dependency (in package.json), so it installs into the
+# project's world-readable node_modules. It is deliberately NOT `bun install
+# -g`: a global install lands in root's home, which the non-root runtime user
+# (compose `user: 1000:1002`) can't reach -> "Script not found dotenvx".
 
+# The image's default HOME is root-owned; give the non-root runtime user a
+# writable HOME so bun/bunx have somewhere for their cache.
+ENV HOME=/tmp
 ENV NODE_ENV=production
 EXPOSE 4060
 
 # dotenvx decrypts the mounted .env (using .env.keys), then we migrate
-# (idempotent) and start the server.
-CMD ["dotenvx", "run", "--", "sh", "-c", "bun run migrate && bun run start"]
+# (idempotent) and start the server. `bunx` resolves the local node_modules
+# copy and runs it via bun (no Node needed in the image).
+CMD ["sh", "-c", "bunx dotenvx run -- sh -c 'bun run migrate && bun run start'"]
