@@ -19,7 +19,6 @@ import {
   diceCoefficient,
 } from "../lib/text.ts";
 import { findAndFlagDuplicates } from "../lib/duplicates.ts";
-import { redis } from "../redis.ts";
 import {
   ensureMediaDirs,
   extractTags,
@@ -273,8 +272,9 @@ songRoutes.patch("/:id", requireAuth, async (c) => {
     WHERE id = ${song.id}
     RETURNING *
   `;
-  // Metadata may have changed -> drop cached lyrics so they refetch.
-  await redis.del(`music:lyrics:${song.id}`).catch(() => {});
+  // Metadata may have changed -> drop stored lyrics so they refetch for the
+  // corrected title/artist on next request.
+  await sql`DELETE FROM song_lyrics WHERE song_id = ${song.id}`.catch(() => {});
   return c.json(toPublicSong(rows[0]!));
 });
 

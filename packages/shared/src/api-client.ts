@@ -104,6 +104,13 @@ export async function startNativeLogin(opts?: {
   return { url: u.toString(), verifier };
 }
 
+// Ask the server to set the session cookie for the current bearer token. Used
+// by same-origin native clients so <audio>/<img> media (which can't send the
+// Authorization header) authenticate via the cookie instead. No-op-ish on web.
+export async function establishSessionCookie(): Promise<void> {
+  await fetch(url("/api/auth/session-cookie"), { method: "POST" });
+}
+
 // Step 2: after the deeplink fires, trade its `code` (+ the saved verifier)
 // for a session token, then wire it into the client. Returns the token so
 // the caller can persist it in secure storage.

@@ -52,6 +52,21 @@ CREATE INDEX IF NOT EXISTS songs_title_idx  ON songs (lower(title));
 CREATE INDEX IF NOT EXISTS songs_artist_idx ON songs (lower(artist));
 CREATE INDEX IF NOT EXISTS songs_normalized_title_idx ON songs (normalized_title);
 
+-- Durable lyrics store. Fetched once from the provider (LRCLIB) then served
+-- from here on every later request. `found` records negative results too, so
+-- tracks the provider genuinely doesn't have aren't re-queried on every play
+-- (app code retries those only after a cooldown). Row is dropped when a song's
+-- metadata is edited, so a corrected title/artist re-fetches. Cascades on
+-- song delete.
+CREATE TABLE IF NOT EXISTS song_lyrics (
+  song_id      uuid PRIMARY KEY REFERENCES songs (id) ON DELETE CASCADE,
+  instrumental boolean NOT NULL DEFAULT false,
+  synced       jsonb   NOT NULL DEFAULT '[]'::jsonb,
+  plain        text,
+  found        boolean NOT NULL DEFAULT false,
+  fetched_at   timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS playlists (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,

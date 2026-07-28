@@ -23,6 +23,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The Discord SDK binaries (*.dylib/*.so/*.aar/*.dbg) are tracked in
+          # Git LFS. Without this the runner only gets pointer files and the
+          # Tauri/cargo build fails to link libdiscord_partner_sdk.
+          lfs: true
 
       - uses: oven-sh/setup-bun@v2
 

@@ -8,6 +8,7 @@ import {
   configureAuthToken,
   startNativeLogin,
   completeNativeLogin,
+  establishSessionCookie,
   type Song,
 } from "@musicapp/shared";
 
@@ -107,6 +108,18 @@ export async function startDesktopLogin(): Promise<void> {
 // persist it, and fire `onLoggedIn` so the app can re-render as signed in.
 export async function initDesktopAuth(onLoggedIn: () => void): Promise<void> {
   if (!isDesktop) return;
+
+  // Restored a token this launch? Make sure the webview also holds the
+  // same-origin session cookie, so media (<audio>/<img>) authenticates. Awaited
+  // here so it's in place before boot() kicks off any media requests.
+  if (hasDesktopToken()) {
+    try {
+      await establishSessionCookie();
+    } catch {
+      /* ignore — API calls still work via the bearer token */
+    }
+  }
+
   const { onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
   await onOpenUrl(async (urls) => {
     for (const raw of urls) {
@@ -131,6 +144,12 @@ export async function initDesktopAuth(onLoggedIn: () => void): Promise<void> {
         try {
           localStorage.setItem(TOKEN_KEY, token);
           sessionStorage.removeItem(VERIFIER_KEY);
+        } catch {
+          /* ignore */
+        }
+        // Drop the same-origin cookie so media requests authenticate too.
+        try {
+          await establishSessionCookie();
         } catch {
           /* ignore */
         }

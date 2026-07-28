@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "identifier": "uk.doughmination.music.desktop",
   "build": {
-    "frontendDist": "../../web/dist",
+    "frontendDist": "https://doughmination.me",
     "devUrl": "https://doughmination.me",
     "beforeDevCommand": "",
-    "beforeBuildCommand": "bun run --filter @musicapp/web build"
+    "beforeBuildCommand": ""
   },
   "app": {
     "windows": [
@@ -38,6 +38,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "frameworks": [
+        "discord_social_sdk/lib/release/libdiscord_partner_sdk.dylib",
+        "discord_social_sdk/lib/release/libdiscord_krisp.dylib"
+      ]
+    }
   }
 }
