@@ -80,6 +80,10 @@ jobs:
           # FUSE (unavailable on GitHub runners) — the other half of the
           # "failed to run linuxdeploy" fix.
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          # Help linuxdeploy resolve the Discord SDK shared object when bundling
+          # the AppImage (backs up the $ORIGIN rpath in build.rs). Linux-only
+          # var; harmless on the macOS/Windows runners.
+          LD_LIBRARY_PATH: ${{ github.workspace }}/apps/desktop/src-tauri/discord_social_sdk/lib/release
         with:
           projectPath: apps/desktop/src-tauri
           # Manual runs supply the tag via the `version` input; tag pushes use
