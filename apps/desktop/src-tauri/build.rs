@@ -9,6 +9,9 @@ fn main() {
     // binary. Cover both layouts:
     //   - dev:          dylib is staged next to the binary -> @executable_path
     //   - packaged app: dylib copied into Contents/Frameworks -> ../Frameworks
+    // (A benign "duplicate -rpath ... ignored" warning may appear on the
+    // packaged build; harmless, and kept for safety since this is what got the
+    // app launching.)
     #[cfg(target_os = "macos")]
     {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");

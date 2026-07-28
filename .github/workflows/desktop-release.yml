@@ -5,16 +5,30 @@ on:
     tags:
       - "desktop-v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to create, e.g. desktop-v1.0.0"
+        required: true
+        type: string
 
 jobs:
   build:
+    # tauri-action creates/updates a GitHub Release, which needs write access.
+    # The default GITHUB_TOKEN is read-only ("Resource not accessible by
+    # integration"), so grant it explicitly.
+    permissions:
+      contents: write
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
             args: "--target universal-apple-darwin"
-          - platform: ubuntu-latest
+          # Pinned to 22.04 (not ubuntu-latest/24.04): builds an AppImage
+          # against an older glibc/webkit so it runs on more distros, and
+          # keeps libappindicator3-dev available.
+          - platform: ubuntu-22.04
             args: ""
           - platform: windows-latest
             args: ""
@@ -36,20 +50,28 @@ jobs:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install Linux tauri deps
-        if: matrix.platform == 'ubuntu-latest'
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          # libfuse2 lets the AppImage tooling (linuxdeploy) run; without it the
+          # bundle step fails with "failed to run linuxdeploy".
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
 
       - run: bun install
 
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Run the AppImage tools in extract-and-run mode so they don't need
+          # FUSE (unavailable on GitHub runners) — the other half of the
+          # "failed to run linuxdeploy" fix.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         with:
           projectPath: apps/desktop/src-tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: "Music Desktop ${{ github.ref_name }}"
+          # Manual runs supply the tag via the `version` input; tag pushes use
+          # the pushed tag name. tauri-action creates the tag + draft release.
+          tagName: ${{ inputs.version || github.ref_name }}
+          releaseName: "Music Desktop ${{ inputs.version || github.ref_name }}"
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

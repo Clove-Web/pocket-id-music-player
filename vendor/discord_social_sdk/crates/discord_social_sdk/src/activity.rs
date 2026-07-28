@@ -916,7 +916,9 @@ impl Activity {
     pub fn supported_platforms(&self) -> ActivityGamePlatforms {
         // SAFETY: read-only getter on an initialised handle.
         let raw = unsafe { sys::Discord_Activity_SupportedPlatforms(self.raw_ptr()) };
-        ActivityGamePlatforms::from_bits(raw.0)
+        // bindgen types this bitmask as u32 on macOS/Linux but c_int (i32) on
+        // Windows; cast so the binding compiles on every target.
+        ActivityGamePlatforms::from_bits(raw.0 as u32)
     }
 
     /// Set the platforms the activity is joinable on.
@@ -925,7 +927,8 @@ impl Activity {
     /// cannot join mobile users and vice versa, this makes the activity show as
     /// joinable on Discord only for users on a compatible platform.
     pub fn set_supported_platforms(&mut self, value: ActivityGamePlatforms) {
-        let raw = sys::Discord_ActivityGamePlatforms(value.bits());
+        // `as _` infers the sys field type (u32 on macOS/Linux, i32 on Windows).
+        let raw = sys::Discord_ActivityGamePlatforms(value.bits() as _);
         // SAFETY: passing a plain bitmask to a setter on an initialised handle.
         unsafe { sys::Discord_Activity_SetSupportedPlatforms(self.as_raw_mut(), raw) }
     }

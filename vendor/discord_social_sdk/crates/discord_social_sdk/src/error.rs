@@ -47,7 +47,8 @@ impl ErrorKind {
             T::Discord_ErrorType_Aborted => Self::Aborted,
             T::Discord_ErrorType_AuthorizationFailed => Self::AuthorizationFailed,
             T::Discord_ErrorType_RPCError => Self::Rpc,
-            other => Self::Other(other.0),
+            // sys error code is u32 on macOS/Linux, i32 on Windows — normalise.
+            other => Self::Other(other.0 as u32),
         }
     }
 }
