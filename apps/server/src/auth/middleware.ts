@@ -27,10 +27,23 @@ export type AppEnv = {
   };
 };
 
+// Web sends the session as an httpOnly cookie (same-origin). Native clients
+// (desktop / mobile) have no shared cookie jar with the server, so they send
+// it as `Authorization: Bearer <token>` instead. Either is accepted; the
+// token itself is the same opaque, revocable session id in both cases.
+export function sessionToken(c: Context<AppEnv>): string | undefined {
+  const auth = c.req.header("authorization");
+  if (auth) {
+    const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
+    if (m) return m[1];
+  }
+  return getCookie(c, cookieNames.session);
+}
+
 export async function loadUser(c: Context<AppEnv>, next: Next) {
   c.set("user", null);
 
-  const token = getCookie(c, cookieNames.session);
+  const token = sessionToken(c);
   if (token) {
     const uid = await readSession(token);
     if (uid) {

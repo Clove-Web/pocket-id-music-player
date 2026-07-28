@@ -46,8 +46,37 @@ fn clear_presence(handle: State<DiscordHandle>) -> Result<(), String> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    // `mut` is only used on Windows/Linux (single-instance); harmless on macOS.
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    // Windows/Linux deliver a deeplink by launching a *second* process with
+    // the URL as an argument. single-instance (with its `deep-link` feature)
+    // catches that, focuses the existing window, and hands the URL to the
+    // deep-link plugin so the frontend's onOpenUrl handler fires as usual.
+    // Must be registered before any other plugin.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+        }));
+    }
+
+    builder
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
+            // In dev there's no installer to register the scheme, so do it at
+            // runtime. No-op / harmless on macOS, where Info.plist handles it.
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let _ = app.deep_link().register_all();
+            }
+
             let (tx, rx) = mpsc::channel::<PresenceUpdate>();
             discord::spawn(DISCORD_APPLICATION_ID, rx);
             app.manage(DiscordHandle(Mutex::new(tx)));

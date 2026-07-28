@@ -3,7 +3,13 @@
 // `window.__TAURI__` anywhere else — it calls these two functions and
 // they no-op in the browser.
 
-import { configureApiBase, type Song } from "@musicapp/shared";
+import {
+  configureApiBase,
+  configureAuthToken,
+  startNativeLogin,
+  completeNativeLogin,
+  type Song,
+} from "@musicapp/shared";
 
 declare global {
   interface Window {
@@ -12,6 +18,9 @@ declare global {
 }
 
 const SERVER_URL_KEY = "music:desktop:serverUrl";
+const TOKEN_KEY = "music:desktop:token";
+const VERIFIER_KEY = "music:desktop:pkceVerifier";
+const REDIRECT_URI = "doughmination://auth/callback";
 
 export const isDesktop = typeof window !== "undefined" && !!window.__TAURI__;
 
@@ -38,6 +47,89 @@ export function initDesktopBridge(): void {
   }
 
   if (serverUrl) configureApiBase(serverUrl);
+
+  // Restore a previously-issued bearer token so the session survives restarts.
+  // (localStorage is fine for a self-hosted desktop app; swap for the OS
+  // keychain via tauri-plugin-stronghold if you want at-rest encryption.)
+  try {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) configureAuthToken(token);
+  } catch {
+    /* ignore */
+  }
+}
+
+// True once a token is stored — lets the UI skip the login screen on boot.
+export function hasDesktopToken(): boolean {
+  try {
+    return isDesktop && Boolean(localStorage.getItem(TOKEN_KEY));
+  } catch {
+    return false;
+  }
+}
+
+// Kick off sign-in: mint PKCE, stash the verifier, and open the login page in
+// the user's *default browser* (not this webview — that's the whole point).
+export async function startDesktopLogin(): Promise<void> {
+  if (!isDesktop) return;
+  const { url, verifier } = await startNativeLogin({ redirect: REDIRECT_URI });
+  try {
+    sessionStorage.setItem(VERIFIER_KEY, verifier);
+  } catch {
+    /* ignore */
+  }
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  await openUrl(url);
+}
+
+// Register the deeplink handler once at startup. When the browser bounces back
+// to doughmination://auth/callback?code=..., trade the code for a token,
+// persist it, and fire `onLoggedIn` so the app can re-render as signed in.
+export async function initDesktopAuth(onLoggedIn: () => void): Promise<void> {
+  if (!isDesktop) return;
+  const { onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
+  await onOpenUrl(async (urls) => {
+    for (const raw of urls) {
+      let code: string | null = null;
+      try {
+        code = new URL(raw).searchParams.get("code");
+      } catch {
+        /* not a URL we care about */
+      }
+      if (!code) continue;
+
+      let verifier = "";
+      try {
+        verifier = sessionStorage.getItem(VERIFIER_KEY) ?? "";
+      } catch {
+        /* ignore */
+      }
+      if (!verifier) continue; // no login in flight on this device
+
+      try {
+        const token = await completeNativeLogin(code, verifier);
+        try {
+          localStorage.setItem(TOKEN_KEY, token);
+          sessionStorage.removeItem(VERIFIER_KEY);
+        } catch {
+          /* ignore */
+        }
+        onLoggedIn();
+      } catch (err) {
+        console.error("native login exchange failed", err);
+      }
+      return; // handled
+    }
+  });
+}
+
+// Clear the stored token on logout so the next boot shows the login screen.
+export function clearDesktopToken(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 // Forwards the currently playing track to the Rust side, which owns the

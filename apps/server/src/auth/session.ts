@@ -9,6 +9,7 @@ import { redis } from "../redis.ts";
 
 const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 days, sliding
 const HANDSHAKE_TTL_SEC = 600; // 10 minutes
+const EXCHANGE_TTL_SEC = 120; // 2 minutes — deeplink -> app -> exchange
 
 function sessKey(id: string): string {
   return `music:sess:${id}`;
@@ -20,6 +21,10 @@ function userSetKey(userId: string): string {
 
 function handshakeKey(id: string): string {
   return `music:oidc:${id}`;
+}
+
+function exchangeKey(code: string): string {
+  return `music:xchg:${code}`;
 }
 
 function randomId(bytes = 32): string {
@@ -78,6 +83,13 @@ export type Handshake = {
   state: string;
   nonce: string;
   verifier: string;
+  // Present only for native (desktop / mobile) logins. `appChallenge` is the
+  // app's own PKCE challenge for the deeplink -> exchange hop; `redirect` is
+  // the (allowlisted) custom-scheme URL to bounce back to after callback.
+  native?: {
+    appChallenge: string;
+    redirect: string;
+  };
 };
 
 export async function saveHandshake(data: Handshake): Promise<string> {
@@ -96,6 +108,40 @@ export async function takeHandshake(id: string): Promise<Handshake | null> {
   try {
     const raw = await redis.getdel(handshakeKey(id));
     return raw ? (JSON.parse(raw) as Handshake) : null;
+  } catch {
+    return null;
+  }
+}
+
+// --- native deeplink exchange codes ---------------------------------------
+// After a native login completes, /callback mints one of these and puts the
+// opaque `code` in the doughmination:// deeplink. The app then trades the
+// code (plus the PKCE verifier that never left the device) for the real
+// session token. One-shot + PKCE-bound: intercepting the deeplink is useless
+// without the verifier, and the code can't be replayed.
+
+export async function mintExchangeCode(data: {
+  sessionId: string;
+  appChallenge: string;
+}): Promise<string> {
+  const code = randomId();
+  await redis.set(
+    exchangeKey(code),
+    JSON.stringify(data),
+    "EX",
+    EXCHANGE_TTL_SEC,
+  );
+  return code;
+}
+
+export async function takeExchangeCode(
+  code: string,
+): Promise<{ sessionId: string; appChallenge: string } | null> {
+  try {
+    const raw = await redis.getdel(exchangeKey(code));
+    return raw
+      ? (JSON.parse(raw) as { sessionId: string; appChallenge: string })
+      : null;
   } catch {
     return null;
   }

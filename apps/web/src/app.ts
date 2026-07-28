@@ -17,7 +17,14 @@ import {
   formatTime,
 } from "@musicapp/player";
 import { readTags } from "./metadata.ts";
-import { initDesktopBridge, syncDiscordPresence } from "./desktop.ts";
+import {
+  initDesktopBridge,
+  initDesktopAuth,
+  startDesktopLogin,
+  clearDesktopToken,
+  isDesktop,
+  syncDiscordPresence,
+} from "./desktop.ts";
 
 initDesktopBridge();
 
@@ -246,13 +253,30 @@ function render(): void {
 }
 
 function renderLogin(): void {
+  // Web navigates the same tab straight to the login route (cookie flow).
+  // Desktop can't: SSO/passkeys don't work in the embedded webview and the
+  // cookie would land in the wrong jar. Instead it opens the system browser
+  // and comes back via the doughmination:// deeplink (see startDesktopLogin).
+  const button = isDesktop
+    ? `<button class="btn btn-primary" id="login-btn">🔑 Sign in with SSO</button>`
+    : `<a class="btn btn-primary" href="/api/auth/login">🔑 Sign in with SSO</a>`;
+
   root.innerHTML = `
     <div class="login">
       <h1>Music</h1>
       <p>Sign in with your passkey to continue.</p>
-      <a class="btn btn-primary" href="/api/auth/login">🔑 Sign in with SSO</a>
+      ${button}
     </div>
   `;
+
+  if (isDesktop) {
+    document.getElementById("login-btn")?.addEventListener("click", () => {
+      startDesktopLogin().catch((err) => {
+        console.error("failed to start login", err);
+        flash("Couldn't open the sign-in page. Try again?");
+      });
+    });
+  }
 }
 
 // --- sidebar --------------------------------------------------------------
@@ -356,6 +380,13 @@ function renderSidebar(): void {
   document.getElementById("logout")?.addEventListener("click", async () => {
     const res = await api.logout();
     const data = (await res.json()) as { endSession: string | null };
+    if (isDesktop) {
+      // No cookie / no navigation: drop the stored token and show login.
+      clearDesktopToken();
+      state.me = null;
+      renderLogin();
+      return;
+    }
     window.location.href = data.endSession ?? "/";
   });
 }
@@ -1958,4 +1989,11 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-void boot();
+// Register the desktop sign-in deeplink handler exactly once, then boot.
+// When the system browser bounces back with a token, re-boot into the
+// signed-in app.
+void initDesktopAuth(() => {
+  void boot();
+}).finally(() => {
+  void boot();
+});
