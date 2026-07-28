@@ -18,4 +18,17 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
         println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
     }
+
+    // Linux equivalent. libdiscord_partner_sdk.so is staged next to the binary,
+    // but the sys crate's `$ORIGIN` rpath (a dependency link-arg) never reaches
+    // this final binary — so linuxdeploy failed with "Could not find
+    // dependency: libdiscord_partner_sdk.so" when building the AppImage.
+    // Emitting $ORIGIN here lets both linuxdeploy (at bundle time) and the
+    // runtime loader find the .so beside the executable. $ORIGIN is written
+    // literally into DT_RPATH (cargo does not shell-expand link args).
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
+    }
 }
