@@ -17,6 +17,7 @@ serde_json = "1"
 # already-running window on Windows/Linux instead of spawning a new process.
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"
+discord_social_sdk = { git = "https://github.com/SafeShows/discord_social_sdk" }
 
 [target."cfg(any(target_os = \"windows\", target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

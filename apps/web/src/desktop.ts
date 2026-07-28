@@ -14,6 +14,7 @@ import {
 declare global {
   interface Window {
     __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
   }
 }
 
@@ -22,7 +23,13 @@ const TOKEN_KEY = "music:desktop:token";
 const VERIFIER_KEY = "music:desktop:pkceVerifier";
 const REDIRECT_URI = "doughmination://auth/callback";
 
-export const isDesktop = typeof window !== "undefined" && !!window.__TAURI__;
+// Tauri v2 does NOT inject `window.__TAURI__` unless `withGlobalTauri` is on,
+// but `__TAURI_INTERNALS__` is always present in the webview — that's the
+// reliable signal. (Without this, isDesktop was false and the app fell back
+// to the plain web login link, navigating the webview straight to SSO.)
+export const isDesktop =
+  typeof window !== "undefined" &&
+  (!!window.__TAURI__ || !!window.__TAURI_INTERNALS__);
 
 // Call once, before the first api.* call. Web is same-origin and this is a
 // no-op there. Desktop has no origin to inherit, so it asks the user for
