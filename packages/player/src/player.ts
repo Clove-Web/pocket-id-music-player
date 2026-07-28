@@ -25,6 +25,7 @@ export class Player {
   private originalOrder: Song[] = []; // order as given to playQueue, never shuffled
   private index = -1;
   private lastTrackChangeId: string | null = null;
+  private playToken = 0; // bumped on every load(); see tryPlay()
   private prefs: Prefs;
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -188,10 +189,20 @@ export class Player {
     const song = this.current;
     if (!song) return;
     const changed = song.id !== this.lastTrackChangeId;
+
+    // Each load supersedes any in-flight play(). This token lets tryPlay()
+    // tell "my play() was interrupted because a newer track started" (an
+    // expected AbortError we should ignore) apart from a real failure.
+    const token = ++this.playToken;
+
     this.audio.src = song.streamUrl;
     this.audio.volume = this.prefs.volume;
-    this.audio.load(); // iOS: explicit load before play
-    this.tryPlay();
+    // NB: deliberately NO explicit audio.load() here. Assigning .src already
+    // kicks off loading; calling .load() in the same tick as play() is the
+    // canonical cause of "The play() request was interrupted by a call to
+    // load()" — the AbortError users were seeing on every track change.
+    this.tryPlay(token);
+
     this.events.emit("change");
     if (changed) {
       this.lastTrackChangeId = song.id;
@@ -261,17 +272,44 @@ export class Player {
     }
   }
 
-  // Play and surface any autoplay/permission error (mainly for iOS).
-  private tryPlay(): void {
+  // Play the current element and surface only *real* failures. `token` ties
+  // this attempt to the load() that started it: if a newer track has since
+  // loaded, the play() promise rejects with AbortError and we ignore it (it
+  // was superseded on purpose). A genuine "element wasn't ready yet" abort is
+  // retried once on `canplay`; autoplay-policy blocks get a friendlier note.
+  private tryPlay(token = this.playToken, retried = false): void {
     this.setupGraph();
     void this.ctx?.resume();
+
     const p = this.audio.play();
-    if (p && typeof p.catch === "function") {
-      p.catch((err: unknown) => {
-        const name = (err as { name?: string })?.name ?? "Error";
-        this.events.emit("error", `Can't play (${name})`);
-      });
-    }
+    if (!p || typeof p.catch !== "function") return;
+
+    p.catch((err: unknown) => {
+      // A newer track load already moved on — this rejection is expected.
+      if (token !== this.playToken) return;
+
+      const name = (err as { name?: string })?.name ?? "Error";
+
+      if (name === "AbortError") {
+        // The element wasn't ready when play() was called. Retry once as soon
+        // as it can play, still guarded by the token so a later skip wins.
+        if (retried) return;
+        this.audio.addEventListener(
+          "canplay",
+          () => this.tryPlay(token, true),
+          { once: true },
+        );
+        return;
+      }
+
+      if (name === "NotAllowedError") {
+        // Autoplay policy blocked us (no user gesture yet) — nothing broke.
+        this.events.emit("error", "Tap play to start");
+        return;
+      }
+
+      this.events.emit("error", `Can't play (${name})`);
+    });
   }
 
   private save(): void {

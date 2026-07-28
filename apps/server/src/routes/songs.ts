@@ -156,12 +156,21 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
         : mimeForAudioPath(song.file_path);
   const range = c.req.header("range");
 
+  // The audio bytes for a given song id never change (an edit only touches
+  // metadata; re-uploading makes a new id), so let the browser cache them
+  // hard. Without this the stream had no cache headers at all, so every
+  // scrub, replay, or revisit re-downloaded the whole file — the main cause
+  // of "taking forever to load", especially on mobile where media buffers
+  // get dropped aggressively. `private` because the endpoint is auth-gated.
+  const cacheControl = "private, max-age=31536000, immutable";
+
   if (!range) {
     return new Response(Bun.file(abs).stream(), {
       headers: {
         "content-type": mime,
         "content-length": String(total),
         "accept-ranges": "bytes",
+        "cache-control": cacheControl,
       },
     });
   }
@@ -185,6 +194,7 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
       "content-length": String(end - start + 1),
       "content-range": `bytes ${start}-${end}/${total}`,
       "accept-ranges": "bytes",
+      "cache-control": cacheControl,
     },
   });
 });
