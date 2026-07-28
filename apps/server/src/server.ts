@@ -3,6 +3,7 @@
 import { join } from "node:path";
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 import { config } from "./config.ts";
 import {
@@ -23,6 +24,20 @@ await ensureMediaDirs();
 startPocketIdGuard();
 
 const app = new Hono<AppEnv>();
+
+// Allow the native apps' webviews to call the API cross-origin. They use
+// bearer tokens, not cookies, so this runs without credentials — web is
+// same-origin and never hits CORS at all. Only allowlisted origins pass.
+app.use(
+  "/api/*",
+  cors({
+    origin: (origin) =>
+      config.nativeOrigins.includes(origin) ? origin : null,
+    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowHeaders: ["Authorization", "Content-Type"],
+    maxAge: 86400,
+  }),
+);
 
 // Every request gets the current user (or null) attached.
 app.use("*", loadUser);

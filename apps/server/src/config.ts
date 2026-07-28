@@ -31,6 +31,43 @@ export const config = {
     scope: "openid profile email",
   },
 
+  // Native (desktop / mobile) sign-in uses the RFC 8252 pattern: auth runs
+  // in the system browser and returns to the app via a custom-scheme
+  // deeplink. The OIDC redirect_uri above never changes (it's always the
+  // server callback registered with PocketID); the deeplink is where the
+  // server sends the *app* afterwards, carrying a one-time exchange code.
+  //
+  // Only schemes on this allowlist are accepted, so /callback can never be
+  // turned into an open redirect into an arbitrary app. Comma-separated,
+  // e.g. "doughmination://auth/callback". The first entry is the default
+  // when a client doesn't request a specific one.
+  nativeRedirects: optional(
+    "MUSIC_NATIVE_REDIRECTS",
+    "doughmination://auth/callback",
+  )
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean),
+
+  // Origins the native apps' webviews present when calling the API
+  // cross-origin. They authenticate with a bearer token (no cookies), so
+  // CORS is allowed for these without credentials. Web is same-origin and
+  // unaffected. Covers Tauri (desktop) and common mobile webview schemes.
+  nativeOrigins: optional(
+    "MUSIC_NATIVE_ORIGINS",
+    [
+      "tauri://localhost",
+      "http://tauri.localhost",
+      "https://tauri.localhost",
+      "capacitor://localhost",
+      "ionic://localhost",
+      "http://localhost",
+    ].join(","),
+  )
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean),
+
   // PocketID has no outbound webhooks (as of writing), so disabling a user
   // there doesn't reach this app on its own. If MUSIC_POCKETID_API_KEY is
   // set, a background poller checks PocketID's user list on this interval

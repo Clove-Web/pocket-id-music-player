@@ -11,6 +11,16 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Sign-in runs in the system browser and returns via a doughmination://
+# deeplink (RFC 8252). `deep-link` receives the callback URL, `opener` opens
+# the browser, and `single-instance` makes sure the deeplink reaches the
+# already-running window on Windows/Linux instead of spawning a new process.
+tauri-plugin-deep-link = "2"
+tauri-plugin-opener = "2"
+
+[target."cfg(any(target_os = \"windows\", target_os = \"linux\"))".dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
 # Rust bindings to the Discord Social SDK (safe wrapper crate).
 # Repo: https://github.com/SafeShows/discord_social_sdk
 # You must separately download the prebuilt SDK from the Discord Developer

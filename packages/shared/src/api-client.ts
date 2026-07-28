@@ -17,6 +17,7 @@ import type {
 } from "./types.ts";
 
 let baseUrl = "";
+let authToken: string | null = null;
 
 // Call once at startup. Web leaves this as "" (same-origin). Desktop calls
 // it with the self-hosted server URL the user enters on first run.
@@ -24,8 +25,31 @@ export function configureApiBase(newBaseUrl: string): void {
   baseUrl = newBaseUrl.replace(/\/$/, "");
 }
 
+// Native clients (desktop / mobile) have no shared cookie with the server,
+// so they authenticate with a bearer token obtained via the deeplink flow
+// (see startNativeLogin / completeNativeLogin below). Web leaves this null
+// and relies on the httpOnly session cookie instead. Pass null to clear it
+// on logout.
+export function configureAuthToken(token: string | null): void {
+  authToken = token;
+}
+
 function url(path: string): string {
   return `${baseUrl}${path}`;
+}
+
+// Every request in this module goes through this wrapper (it shadows the
+// global `fetch`). It attaches the bearer token when one is set (native
+// clients). Web sets no token and keeps fetch's default same-origin
+// credentials, so its session cookie rides along as before. Credentials are
+// deliberately NOT forced to "include": native auth is header-based, and
+// forcing it would drag the whole request into CORS-with-credentials.
+// Bodies (incl. FormData) are untouched.
+function fetch(input: string, init: RequestInit = {}): Promise<Response> {
+  if (!authToken) return globalThis.fetch(input, init);
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${authToken}`);
+  return globalThis.fetch(input, { ...init, headers });
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -35,6 +59,68 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+// --- native (deeplink) login ----------------------------------------------
+// RFC 8252 flow for desktop / mobile: auth runs in the *system* browser, then
+// returns to the app via a doughmination:// deeplink carrying a one-time
+// code. The verifier below never leaves the device — it's what stops another
+// app that hijacks the scheme from redeeming an intercepted code.
+
+function base64url(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function randomVerifier(): string {
+  const bytes = new Uint8Array(48);
+  crypto.getRandomValues(bytes);
+  return base64url(bytes);
+}
+
+async function pkceChallenge(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+  return base64url(new Uint8Array(digest));
+}
+
+// Step 1: build the system-browser login URL and hold onto the verifier.
+// The caller opens `url` in the OS browser (NOT the app webview) and keeps
+// `verifier` for step 2.
+export async function startNativeLogin(opts?: {
+  redirect?: string;
+}): Promise<{ url: string; verifier: string }> {
+  const verifier = randomVerifier();
+  const challenge = await pkceChallenge(verifier);
+  // Absolute when a base URL is configured (desktop); otherwise resolve against
+  // the current origin (mobile SPA served from the server).
+  const fallbackBase =
+    typeof location !== "undefined" ? location.origin : undefined;
+  const u = new URL(url("/api/auth/login"), baseUrl || fallbackBase);
+  u.searchParams.set("mode", "native");
+  u.searchParams.set("app_challenge", challenge);
+  if (opts?.redirect) u.searchParams.set("redirect", opts.redirect);
+  return { url: u.toString(), verifier };
+}
+
+// Step 2: after the deeplink fires, trade its `code` (+ the saved verifier)
+// for a session token, then wire it into the client. Returns the token so
+// the caller can persist it in secure storage.
+export async function completeNativeLogin(
+  code: string,
+  verifier: string,
+): Promise<string> {
+  const res = await fetch(url("/api/auth/native/exchange"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code, verifier }),
+  });
+  const { token } = await json<{ token: string }>(res);
+  configureAuthToken(token);
+  return token;
+}
+
 export const api = {
   async me(): Promise<Me | null> {
     const res = await fetch(url("/api/me"));
@@ -42,8 +128,10 @@ export const api = {
     return data.user;
   },
 
-  logout(): Promise<Response> {
-    return fetch(url("/api/auth/logout"), { method: "POST" });
+  async logout(): Promise<Response> {
+    const res = await fetch(url("/api/auth/logout"), { method: "POST" });
+    configureAuthToken(null); // drop the native bearer token, if any
+    return res;
   },
 
   listSongs(query?: string): Promise<Song[]> {

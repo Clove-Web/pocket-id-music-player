@@ -7,9 +7,11 @@ import {
   deleteCookie,
 } from "hono/cookie";
 
+import { config } from "../config.ts";
 import { sql, type User } from "../db/index.ts";
 import {
   requireAuth,
+  sessionToken,
   type AppEnv,
 } from "../auth/middleware.ts";
 import { rateLimit } from "../lib/ratelimit.ts";
@@ -25,8 +27,10 @@ import {
   createSession,
   destroyAllSessions,
   destroySession,
+  mintExchangeCode,
   saveHandshake,
   secureCookieOpts,
+  takeExchangeCode,
   takeHandshake,
 } from "../auth/session.ts";
 
@@ -40,8 +44,32 @@ authRoutes.get("/login", loginLimit, async (c) => {
   const verifier = randomString(48);
   const challenge = await pkceChallenge(verifier);
 
+  // Native (desktop / mobile) clients open this in the *system* browser and
+  // pass ?mode=native plus their own PKCE challenge for the deeplink hop.
+  // Web omits these and gets the classic cookie + redirect-to-"/" flow.
+  let native: { appChallenge: string; redirect: string } | undefined;
+  if (c.req.query("mode") === "native") {
+    const appChallenge = c.req.query("app_challenge");
+    if (!appChallenge) {
+      return c.json({ error: "missing_app_challenge" }, 400);
+    }
+    // Only allowlisted custom schemes are accepted, so this can never be
+    // turned into an open redirect. A client may request a specific one;
+    // otherwise it gets the first configured redirect.
+    const requested = c.req.query("redirect");
+    const redirect = requested
+      ? config.nativeRedirects.includes(requested)
+        ? requested
+        : null
+      : config.nativeRedirects[0];
+    if (!redirect) {
+      return c.json({ error: "redirect_not_allowed" }, 400);
+    }
+    native = { appChallenge, redirect };
+  }
+
   // Stash the handshake in Redis; the cookie only holds its opaque id.
-  const handshakeId = await saveHandshake({ state, nonce, verifier });
+  const handshakeId = await saveHandshake({ state, nonce, verifier, native });
   setCookie(c, cookieNames.handshake, handshakeId, secureCookieOpts);
 
   const url = await buildAuthUrl({
@@ -97,19 +125,67 @@ authRoutes.get("/callback", async (c) => {
     RETURNING *
   `;
   const user = rows[0]!;
+  const sessionId = await createSession(user.id);
 
-  setCookie(
-    c,
-    cookieNames.session,
-    await createSession(user.id),
-    secureCookieOpts,
-  );
+  // Native flow: don't set a cookie (it'd land in the system browser, where
+  // it's useless to the app). Instead mint a one-time, PKCE-bound exchange
+  // code and bounce back into the app via its custom-scheme deeplink. The
+  // app trades that code for the session token over HTTPS.
+  if (hs.native) {
+    const exchange = await mintExchangeCode({
+      sessionId,
+      appChallenge: hs.native.appChallenge,
+    });
+    const dest = new URL(hs.native.redirect);
+    dest.searchParams.set("code", exchange);
+    return c.redirect(dest.toString());
+  }
 
+  // Web flow: httpOnly session cookie + back to the app.
+  setCookie(c, cookieNames.session, sessionId, secureCookieOpts);
   return c.redirect("/");
 });
 
+// Native clients trade the one-time deeplink code (+ the PKCE verifier that
+// never left the device) for the actual session token. Bearer it on every
+// subsequent request. Rate-limited: the code is single-use anyway, but this
+// blunts brute-forcing of the opaque code space.
+const exchangeLimit = rateLimit({
+  name: "native-exchange",
+  limit: 20,
+  windowSec: 60,
+});
+
+authRoutes.post("/native/exchange", exchangeLimit, async (c) => {
+  let body: { code?: string; verifier?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+
+  const { code, verifier } = body;
+  if (!code || !verifier) {
+    return c.json({ error: "missing_params" }, 400);
+  }
+
+  // One-shot read (deleted on fetch) so a code can't be replayed.
+  const record = await takeExchangeCode(code);
+  if (!record) {
+    return c.json({ error: "invalid_code" }, 400);
+  }
+
+  // PKCE proof: only the app that started the login holds the verifier.
+  const expected = await pkceChallenge(verifier);
+  if (expected !== record.appChallenge) {
+    return c.json({ error: "pkce_mismatch" }, 400);
+  }
+
+  return c.json({ token: record.sessionId });
+});
+
 authRoutes.post("/logout", async (c) => {
-  const sid = getCookie(c, cookieNames.session);
+  const sid = sessionToken(c); // cookie (web) or Authorization: Bearer (native)
   if (sid) await destroySession(sid);
   deleteCookie(c, cookieNames.session, secureCookieOpts);
   const url = await endSessionUrl();
