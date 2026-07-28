@@ -1,8 +1,9 @@
-// Lyrics via LRCLIB (same provider /personal uses), fetched server-side and
-// cached in Redis. The library is shared, so one lookup per song serves all
-// users. Falls back across mirror hosts; get-by-duration first, then search.
+// Lyrics via LRCLIB (same provider /personal uses), fetched server-side once
+// and then persisted to the database (song_lyrics). The library is shared, so
+// one lookup per song serves all users, forever, without re-hitting LRCLIB.
+// Falls back across mirror hosts; get-by-duration first, then search.
 
-import { redis } from "../redis.ts";
+import { sql } from "../db/index.ts";
 
 const HOSTS = [
   "https://lrclib.net",
@@ -13,7 +14,19 @@ const HOSTS = [
 ];
 
 const UA = "doughmination-music (https://doughmination.me)";
-const CACHE_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
+
+// A stored *negative* result (provider had nothing) is retried after this long,
+// in case the track got added to LRCLIB since. Positive results never expire.
+const RETRY_NOT_FOUND_MS = 7 * 24 * 60 * 60 * 1000;
+
+type LyricsRow = {
+  song_id: string;
+  instrumental: boolean;
+  synced: SyncedLine[]; // jsonb -> already parsed by postgres.js
+  plain: string | null;
+  found: boolean;
+  fetched_at: string | Date;
+};
 
 export type SyncedLine = { t: number; text: string };
 
@@ -117,17 +130,25 @@ export async function getLyrics(song: {
   album: string | null;
   durationS: number | null;
 }): Promise<LyricsResult> {
-  const cacheKey = `music:lyrics:${song.id}`;
-
-  const cached = await redis.get(cacheKey).catch(() => null);
-  if (cached) {
-    try {
-      return JSON.parse(cached) as LyricsResult;
-    } catch {
-      /* fall through to refetch */
+  // Serve from the DB if we've already looked this song up — unless it was a
+  // negative result that's now old enough to be worth retrying.
+  const rows = await sql<LyricsRow[]>`
+    SELECT * FROM song_lyrics WHERE song_id = ${song.id}
+  `.catch(() => [] as LyricsRow[]);
+  const existing = rows[0];
+  if (existing) {
+    const age = Date.now() - new Date(existing.fetched_at).getTime();
+    const staleMiss = !existing.found && age > RETRY_NOT_FOUND_MS;
+    if (!staleMiss) {
+      return {
+        instrumental: existing.instrumental,
+        synced: existing.synced ?? [],
+        plain: existing.plain,
+      };
     }
   }
 
+  // Miss (or stale negative): fetch from the provider.
   let rec: LrclibRecord | null = null;
   if (song.durationS) {
     rec = await lrclibGet({
@@ -140,8 +161,25 @@ export async function getLyrics(song: {
   if (!rec) rec = await lrclibSearch(song.title, song.artist);
 
   const result = normalize(rec);
-  await redis
-    .set(cacheKey, JSON.stringify(result), "EX", CACHE_TTL_SEC)
-    .catch(() => {});
+  const found = rec !== null;
+
+  // Persist (upsert) so we never look this up again. Best-effort: a DB write
+  // failure must not stop us returning the lyrics we just fetched.
+  await sql`
+    INSERT INTO song_lyrics (song_id, instrumental, synced, plain, found, fetched_at)
+    VALUES (
+      ${song.id}, ${result.instrumental}, ${sql.json(result.synced)},
+      ${result.plain}, ${found}, now()
+    )
+    ON CONFLICT (song_id) DO UPDATE SET
+      instrumental = EXCLUDED.instrumental,
+      synced       = EXCLUDED.synced,
+      plain        = EXCLUDED.plain,
+      found        = EXCLUDED.found,
+      fetched_at   = now()
+  `.catch((err) => {
+    console.error("lyrics persist failed:", err);
+  });
+
   return result;
 }

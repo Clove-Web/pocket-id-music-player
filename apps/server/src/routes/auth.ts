@@ -188,6 +188,18 @@ authRoutes.post("/native/exchange", exchangeLimit, async (c) => {
   return c.json({ token: record.sessionId });
 });
 
+// Native clients authenticate API calls with a bearer token, but <audio> and
+// <img> elements can't attach headers — and since the desktop app is loaded
+// same-origin with the server, the fix is to also drop the session cookie into
+// the webview's jar. Then media requests carry it automatically. Requires an
+// already-valid bearer (requireAuth), and just mirrors that same session id
+// into a cookie, so it grants nothing new.
+authRoutes.post("/session-cookie", requireAuth, (c) => {
+  const sid = sessionToken(c);
+  if (sid) setCookie(c, cookieNames.session, sid, secureCookieOpts);
+  return c.json({ ok: true });
+});
+
 authRoutes.post("/logout", async (c) => {
   const sid = sessionToken(c); // cookie (web) or Authorization: Bearer (native)
   if (sid) await destroySession(sid);
