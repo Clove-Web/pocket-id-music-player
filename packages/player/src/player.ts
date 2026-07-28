@@ -57,6 +57,66 @@ export class Player {
       const err = this.audio.error;
       if (err) this.events.emit("error", `Audio error (code ${err.code})`);
     });
+
+    this.setupMediaSession();
+  }
+
+  // Wire OS media controls (macOS media keys / Now Playing widget, Windows
+  // SMTC, mobile lock-screen) to the player. Without this the hardware keys
+  // don't reach the app at all.
+  private setupMediaSession(): void {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    try {
+      ms.setActionHandler("play", () => this.tryPlay());
+      ms.setActionHandler("pause", () => this.audio.pause());
+      ms.setActionHandler("previoustrack", () => this.prev());
+      ms.setActionHandler("nexttrack", () => this.next());
+      ms.setActionHandler("seekto", (d) => {
+        if (typeof d.seekTime === "number") this.seek(d.seekTime);
+      });
+    } catch {
+      /* some actions aren't supported everywhere — ignore */
+    }
+    this.audio.addEventListener("play", () => {
+      ms.playbackState = "playing";
+    });
+    this.audio.addEventListener("pause", () => {
+      ms.playbackState = "paused";
+    });
+    this.audio.addEventListener("timeupdate", () => this.updatePositionState());
+  }
+
+  private updateMediaMetadata(song: Song): void {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: song.title,
+        artist: song.artist,
+        album: song.album ?? "",
+        artwork: song.coverUrl
+          ? [{ src: absoluteUrl(song.coverUrl), sizes: "512x512", type: "image/jpeg" }]
+          : [],
+      });
+    } catch {
+      /* MediaMetadata unsupported — ignore */
+    }
+  }
+
+  private updatePositionState(): void {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    if (typeof navigator.mediaSession.setPositionState !== "function") return;
+    const duration = this.audio.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration,
+        position: Math.min(this.audio.currentTime || 0, duration),
+        playbackRate: this.audio.playbackRate || 1,
+      });
+    } catch {
+      /* ignore invalid position states */
+    }
   }
 
   get current(): Song | null {
@@ -197,6 +257,7 @@ export class Player {
 
     this.audio.src = song.streamUrl;
     this.audio.volume = this.prefs.volume;
+    this.updateMediaMetadata(song);
     // NB: deliberately NO explicit audio.load() here. Assigning .src already
     // kicks off loading; calling .load() in the same tick as play() is the
     // canonical cause of "The play() request was interrupted by a call to
@@ -234,6 +295,7 @@ export class Player {
     const song = this.current;
     if (!song) return;
     this.audio.src = song.streamUrl;
+    this.updateMediaMetadata(song);
     this.audio.load();
     const onMeta = () => {
       try {
@@ -314,6 +376,16 @@ export class Player {
 
   private save(): void {
     this.storage.save(this.prefs);
+  }
+}
+
+// Resolve a possibly-relative URL (e.g. "/api/songs/x/cover") to absolute, for
+// MediaSession artwork which the OS fetches out-of-context.
+function absoluteUrl(u: string): string {
+  try {
+    return new URL(u, typeof location !== "undefined" ? location.href : undefined).href;
+  } catch {
+    return u;
   }
 }
 
