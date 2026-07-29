@@ -1,12 +1,50 @@
+/* Comic Code — the shared face across every site, served from the same CDN the
+   personal + info sites use. Four cuts (regular / italic / medium / bold). */
+@font-face {
+  font-family: "Comic Code";
+  src: url("https://fonts.doughmination.co.uk/ComicCode-Regular_2022-05-24-151938_hsmz.woff2") format("woff2"),
+    url("https://fonts.doughmination.co.uk/ComicCode-Regular_2022-05-24-151938_hsmz.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Comic Code";
+  src: url("https://fonts.doughmination.co.uk/ComicCode-Italic_2022-05-24-151939_rdtu.woff2") format("woff2"),
+    url("https://fonts.doughmination.co.uk/ComicCode-Italic_2022-05-24-151939_rdtu.woff") format("woff");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Comic Code";
+  src: url("https://fonts.doughmination.co.uk/ComicCode-Medium_2022-05-24-151941_ugqm.woff2") format("woff2"),
+    url("https://fonts.doughmination.co.uk/ComicCode-Medium_2022-05-24-151941_ugqm.woff") format("woff");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Comic Code";
+  src: url("https://fonts.doughmination.co.uk/ComicCode-Bold_2022-05-24-152309_zqkm.woff2") format("woff2"),
+    url("https://fonts.doughmination.co.uk/ComicCode-Bold_2022-05-24-152309_zqkm.woff") format("woff");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --bg: #0e0f13;
-  --panel: #16181f;
-  --panel-2: #1d2029;
-  --text: #e8eaf0;
-  --muted: #9aa0ad;
-  --accent: #6c8cff;
-  --danger: #ff6b6b;
-  --border: #262a35;
+  /* Unified dark palette — derived from the info site's colours so every app
+     matches. bg #0a0b10, surface #12141c, surfaceHover #1b1e2a, text #f4f6fb,
+     muted #9aa3c2, border #232838, accent #f5a9b8. */
+  --bg: #0a0b10;
+  --panel: #12141c;
+  --panel-2: #1b1e2a;
+  --text: #f4f6fb;
+  --muted: #9aa3c2;
+  --accent: #f5a9b8;
+  --danger: #d15f8c;
+  --border: #232838;
   --radius: 10px;
 }
 
@@ -16,7 +54,7 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Comic Code", ui-monospace, monospace;
   background: var(--bg);
   color: var(--text);
   overflow-x: hidden;
@@ -60,7 +98,7 @@ button {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0b0d12;
+  color: var(--bg);
   font-weight: 600;
 }
 
@@ -84,7 +122,7 @@ button {
 
 .icon-btn.play {
   background: var(--accent);
-  color: #0b0d12;
+  color: var(--bg);
 }
 
 .link {
@@ -289,7 +327,7 @@ button {
   border: none;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  color: var(--text);
   font-size: 1.15rem;
   opacity: 0;
   transition: opacity 0.15s ease;
@@ -786,7 +824,7 @@ button {
 }
 
 .b-stat.ok {
-  color: #78c88c;
+  color: var(--accent);
 }
 
 .b-stat.err {

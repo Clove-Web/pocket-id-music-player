@@ -231,15 +231,22 @@ function returnToAppPage(deeplink: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Return to Doughmination Music</title>
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; background: #0b0b0f;
-           color: #eee; display: grid; place-items: center; height: 100vh;
+    /* Comic Code + info dark palette, matching every other app. */
+    @font-face { font-family: "Comic Code";
+      src: url("https://fonts.doughmination.co.uk/ComicCode-Regular_2022-05-24-151938_hsmz.woff2") format("woff2");
+      font-weight: 400; font-style: normal; font-display: swap; }
+    @font-face { font-family: "Comic Code";
+      src: url("https://fonts.doughmination.co.uk/ComicCode-Bold_2022-05-24-152309_zqkm.woff2") format("woff2");
+      font-weight: 700; font-style: normal; font-display: swap; }
+    body { font-family: "Comic Code", ui-monospace, monospace; background: #0a0b10;
+           color: #f4f6fb; display: grid; place-items: center; height: 100vh;
            margin: 0; text-align: center; }
     .card { max-width: 22rem; padding: 2rem; }
     h1 { font-size: 1.4rem; margin: 0 0 .5rem; }
-    p { color: #9aa; margin: 0 0 1.5rem; line-height: 1.5; }
-    a.btn { display: inline-block; background: #7c3aed; color: #fff;
+    p { color: #9aa3c2; margin: 0 0 1.5rem; line-height: 1.5; }
+    a.btn { display: inline-block; background: #f5a9b8; color: #0a0b10;
             text-decoration: none; padding: .8rem 1.6rem; border-radius: 9999px;
-            font-weight: 600; }
+            font-weight: 700; }
   </style>
 </head>
 <body>
