@@ -8,13 +8,10 @@ name: release
 # 
 # THIS FILE IS MADE BY CLAUDE, SO IF SHIT BREAKS, I'M SORRY!
 on:
-  push:
-    tags:
-      - "desktop-v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag to create, e.g. desktop-v1.0.0"
+        description: "Release tag to create, e.g. v1.0.0"
         required: true
         type: string
 
@@ -157,7 +154,12 @@ jobs:
         working-directory: apps/desktop/src-tauri
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: bunx @tauri-apps/cli@2 android init
+        # Use the locally-installed CLI (bun run tauri) rather than `bunx`.
+        # Tauri's generated Gradle project builds the Rust code per-ABI by
+        # re-invoking the CLI as `bun run tauri …`, which needs a `tauri`
+        # package.json script + @tauri-apps/cli as a dep. `bunx` leaves neither
+        # in place, so that nested call fails with `Script not found "tauri"`.
+        run: bun run tauri android init
 
       # Inject the release signingConfig into the freshly generated
       # build.gradle.kts, then write keystore.properties + the decoded keystore
@@ -176,7 +178,7 @@ jobs:
         working-directory: apps/desktop/src-tauri
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: bunx @tauri-apps/cli@2 android build --apk
+        run: bun run tauri android build --apk
 
       # Attach the signed APK to the draft release, then publish it as the
       # latest release. Fails loudly if only an -unsigned APK exists (which
