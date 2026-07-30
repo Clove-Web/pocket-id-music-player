@@ -3,6 +3,7 @@
 import {
   mkdir,
   writeFile,
+  rm,
 } from "node:fs/promises";
 import {
   join,
@@ -28,9 +29,21 @@ const AUDIO_MIME: Record<string, string> = {
   ".wav": "audio/wav",
   ".ogg": "audio/ogg",
   ".oga": "audio/ogg",
-  ".opus": "audio/opus",
+  // Our transcodes (and typical .opus files) are Opus-in-Ogg. "audio/ogg" is
+  // the container type browsers reliably accept for that; "audio/opus" is not
+  // a registered file type and some players refuse it.
+  ".opus": "audio/ogg",
   ".weba": "audio/webm",
 };
+
+// Uploaded formats worth transcoding to Opus: the big lossless ones. Already-
+// compressed uploads (mp3/aac/m4a/ogg/opus) are left as-is — re-encoding them
+// would just lose quality for little size win.
+const LOSSLESS_EXTS = new Set([".flac", ".wav", ".aif", ".aiff"]);
+
+export function isLosslessMaster(relPath: string): boolean {
+  return LOSSLESS_EXTS.has(extname(relPath).toLowerCase());
+}
 
 const IMAGE_MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -124,6 +137,65 @@ export async function saveAudio(
   const rel = join("audio", `${randomName()}${ext}`);
   await writeFile(resolveMedia(rel), bytes);
   return rel;
+}
+
+// Transcode a stored master to Ogg-Opus and persist it alongside. Returns the
+// relative path of the new .opus file, or null if transcoding is disabled or
+// ffmpeg failed (caller then just keeps streaming the master).
+//
+// -vn drops any embedded cover art (we serve covers separately, and art in an
+// Opus stream trips up some players). libopus with VBR at the configured
+// bitrate is transparent for music at 128k+ while being ~5-10x smaller than a
+// FLAC.
+export async function transcodeToOpus(
+  masterRelPath: string,
+): Promise<string | null> {
+  if (!config.opus.enabled) return null;
+
+  const inAbs = resolveMedia(masterRelPath);
+  const outRel = join("audio", `${randomName()}.opus`);
+  const outAbs = resolveMedia(outRel);
+
+  try {
+    const proc = Bun.spawn(
+      [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        inAbs,
+        "-vn",
+        "-c:a",
+        "libopus",
+        "-b:a",
+        config.opus.bitrate,
+        "-vbr",
+        "on",
+        "-application",
+        "audio",
+        "-f",
+        "opus",
+        outAbs,
+      ],
+      { stdout: "ignore", stderr: "pipe" },
+    );
+
+    const exit = await proc.exited;
+    if (exit !== 0) {
+      const err = await new Response(proc.stderr).text();
+      console.error(`ffmpeg transcode failed (exit ${exit}): ${err.trim()}`);
+      await rm(outAbs, { force: true }).catch(() => {});
+      return null;
+    }
+    return outRel;
+  } catch (err) {
+    // ffmpeg missing from PATH, spawn failure, etc. — never fatal.
+    console.error("transcodeToOpus error:", err);
+    await rm(outAbs, { force: true }).catch(() => {});
+    return null;
+  }
 }
 
 // Persist a cover image. Returns the relative path stored in the DB.

@@ -26,6 +26,11 @@ export class Player {
   private index = -1;
   private lastTrackChangeId: string | null = null;
   private playToken = 0; // bumped on every load(); see tryPlay()
+  // Auto-recovery for a stream that drops mid-play (network blip, a transient
+  // server hiccup, mobile dropping the media buffer). See recoverPlayback().
+  private recoverAttempts = 0;
+  private readonly maxRecoverAttempts = 4;
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
   private prefs: Prefs;
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -53,9 +58,29 @@ export class Player {
     this.audio.addEventListener("play", () => this.events.emit("change"));
     this.audio.addEventListener("pause", () => this.events.emit("change"));
     this.audio.addEventListener("volumechange", () => this.events.emit("change"));
+
+    // Playback made progress -> the stream is healthy again: clear any pending
+    // stall watchdog and reset the recovery counter.
+    this.audio.addEventListener("playing", () => {
+      this.recoverAttempts = 0;
+      this.clearStallTimer();
+    });
+    this.audio.addEventListener("canplay", () => this.clearStallTimer());
+
+    // `stalled`/`waiting` fire when the buffer starves. Usually the browser
+    // recovers on its own, so we don't act immediately — we arm a watchdog and
+    // only force a reload if it's still starved after a grace period.
+    this.audio.addEventListener("stalled", () => this.armStallWatchdog());
+    this.audio.addEventListener("waiting", () => this.armStallWatchdog());
+
     this.audio.addEventListener("error", () => {
       const err = this.audio.error;
-      if (err) this.events.emit("error", `Audio error (code ${err.code})`);
+      if (!err) return;
+      // MEDIA_ERR_ABORTED (1) is us changing tracks on purpose — ignore.
+      // NETWORK (2) / DECODE (3) / SRC_NOT_SUPPORTED (4, what a dropped or
+      // 401'd stream often surfaces as) are recoverable: re-fetch and resume.
+      if (err.code === 1) return;
+      this.recoverPlayback();
     });
 
     this.setupMediaSession();
@@ -250,6 +275,10 @@ export class Player {
     if (!song) return;
     const changed = song.id !== this.lastTrackChangeId;
 
+    // Fresh track: drop any recovery state carried over from the last one.
+    this.recoverAttempts = 0;
+    this.clearStallTimer();
+
     // Each load supersedes any in-flight play(). This token lets tryPlay()
     // tell "my play() was interrupted because a newer track started" (an
     // expected AbortError we should ignore) apart from a real failure.
@@ -372,6 +401,68 @@ export class Player {
 
       this.events.emit("error", `Can't play (${name})`);
     });
+  }
+
+  // Arm a one-shot watchdog for a stall. If we're still supposed to be playing
+  // but the buffer is starved after the grace period, force a recovery. No-op
+  // if a timer is already pending (repeated stalled/waiting events coalesce).
+  private armStallWatchdog(): void {
+    if (this.stallTimer) return;
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null;
+      // readyState < HAVE_FUTURE_DATA (3) means it can't keep playing.
+      if (!this.audio.paused && this.audio.readyState < 3) {
+        this.recoverPlayback();
+      }
+    }, 8000);
+  }
+
+  private clearStallTimer(): void {
+    if (this.stallTimer !== null) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
+    }
+  }
+
+  // Re-fetch the current stream and resume from where it dropped. Bounded and
+  // backed off so a genuinely dead source can't loop forever, and guarded by
+  // playToken so a track change during the wait cancels the retry cleanly.
+  private recoverPlayback(): void {
+    const song = this.current;
+    if (!song) return;
+
+    this.clearStallTimer();
+
+    if (this.recoverAttempts >= this.maxRecoverAttempts) {
+      this.recoverAttempts = 0;
+      this.events.emit("error", "Playback stopped — tap play to retry");
+      return;
+    }
+
+    const attempt = ++this.recoverAttempts;
+    const wasPlaying = !this.audio.paused;
+    const position = this.audio.currentTime || 0;
+    const delay = Math.min(500 * 2 ** (attempt - 1), 4000); // 0.5s,1s,2s,4s
+    const token = ++this.playToken; // supersede any in-flight play()
+
+    setTimeout(() => {
+      if (token !== this.playToken) return; // a real track change won the race
+      // Reassigning src forces a fresh request for the same bytes.
+      this.audio.src = song.streamUrl;
+      const onMeta = () => {
+        this.audio.removeEventListener("loadedmetadata", onMeta);
+        try {
+          if (position > 0 && Number.isFinite(this.audio.duration)) {
+            this.audio.currentTime = position;
+          }
+        } catch {
+          /* seeking may be unavailable until more buffers in — best effort */
+        }
+        if (wasPlaying) this.tryPlay(token);
+      };
+      this.audio.addEventListener("loadedmetadata", onMeta, { once: true });
+      this.audio.load();
+    }, delay);
   }
 
   private save(): void {

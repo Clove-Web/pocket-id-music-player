@@ -92,6 +92,16 @@ export const config = {
   mediaDir: optional("MUSIC_MEDIA_DIR", "./data/media"),
   maxUploadBytes: Number(optional("MUSIC_MAX_UPLOAD_MB", "200")) * 1024 * 1024,
 
+  // On upload, lossless masters (FLAC/WAV/AIFF) get a small Ogg-Opus copy
+  // transcoded in the background (needs ffmpeg on PATH — it's in the Docker
+  // image). The master is always kept; /stream just prefers the Opus when it
+  // exists, so mobile isn't pulling full FLACs. Set MUSIC_OPUS_TRANSCODE=false
+  // to disable and always stream the master. Bitrate is Opus VBR target.
+  opus: {
+    enabled: optional("MUSIC_OPUS_TRANSCODE", "true") !== "false",
+    bitrate: optional("MUSIC_OPUS_BITRATE", "128k"),
+  },
+
   // Offload audio/cover byte-serving to nginx via X-Accel-Redirect. When set
   // (e.g. "/_media"), /stream and /cover just authenticate then hand the file
   // to nginx by internal-redirect, so the app never streams the bytes and

@@ -49,16 +49,28 @@ export async function createSession(userId: string): Promise<string> {
   return id;
 }
 
-// Returns the userId, refreshing the TTL (sliding expiry). Fails open to null.
+// Returns the userId, refreshing the TTL (sliding expiry).
+//
+// The lookup that matters is the GET. The EXPIRE that renews the sliding
+// window is deliberately fire-and-forget: previously it was awaited inside
+// the same try/catch, so a single transient Redis hiccup on the *refresh*
+// would throw and make a perfectly valid session read as null — i.e. the user
+// got logged out mid-playback (every stream range request hits this) for no
+// reason. Now a failed renewal can't invalidate a session we already resolved.
 export async function readSession(id: string): Promise<string | null> {
+  let userId: string | null;
   try {
-    const userId = await redis.get(sessKey(id));
-    if (!userId) return null;
-    await redis.expire(sessKey(id), SESSION_TTL_SEC);
-    return userId;
+    userId = await redis.get(sessKey(id));
   } catch {
+    // A genuine Redis read failure — we can't confirm the session right now.
+    // ioredis retries the command internally; the next request will try again.
     return null;
   }
+  if (!userId) return null;
+
+  // Best-effort renewal: never let its failure affect the resolved session.
+  redis.expire(sessKey(id), SESSION_TTL_SEC).catch(() => {});
+  return userId;
 }
 
 export async function destroySession(id: string): Promise<void> {
