@@ -28,7 +28,8 @@ export type Song = {
   artist: string;
   album: string | null;
   cover_path: string | null;
-  file_path: string;
+  file_path: string; // the uploaded master (e.g. FLAC)
+  stream_path: string | null; // optional transcoded Ogg-Opus copy for streaming
   mime: string | null;
   duration_s: number | null;
   size_bytes: string; // bigint comes back as string

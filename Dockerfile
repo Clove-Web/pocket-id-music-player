@@ -1,6 +1,12 @@
 FROM oven/bun:1 AS base
 WORKDIR /app
 
+# ffmpeg powers the background Opus transcode (lib/media.ts). Without it the
+# app still runs — transcoding just no-ops and /stream serves the master.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 RUN bun install
 

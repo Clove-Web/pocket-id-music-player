@@ -80,6 +80,9 @@ duplicateRoutes.post("/:id/duplicate", async (c) => {
     if (song) {
       await sql`DELETE FROM songs WHERE id = ${song.id}`;
       await unlink(resolveMedia(song.file_path)).catch(() => {});
+      if (song.stream_path) {
+        await unlink(resolveMedia(song.stream_path)).catch(() => {});
+      }
       if (song.cover_path) {
         await unlink(resolveMedia(song.cover_path)).catch(() => {});
       }

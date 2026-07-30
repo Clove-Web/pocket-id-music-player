@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS songs (
 -- Added after initial release; safe on existing databases.
 ALTER TABLE songs ADD COLUMN IF NOT EXISTS explicit boolean NOT NULL DEFAULT false;
 
+-- Optional transcoded stream (Ogg-Opus) generated from the uploaded master.
+-- file_path stays the lossless/original master; stream_path, when set, is a
+-- small Opus copy the /stream endpoint prefers so mobile isn't pulling full
+-- FLACs. NULL means "no transcode yet" -> fall back to streaming the master.
+-- See lib/media.ts (transcodeToOpus) and routes/songs.ts.
+ALTER TABLE songs ADD COLUMN IF NOT EXISTS stream_path text;
+
 -- Used by duplicate detection (src/lib/duplicates.ts). New rows get a
 -- properly normalised value from the app; this backfill is a coarser
 -- approximation for rows that predate the column, just so nothing is NULL.

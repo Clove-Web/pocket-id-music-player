@@ -27,6 +27,8 @@ import {
   saveCover,
   mimeForAudioPath,
   mimeForCoverPath,
+  isLosslessMaster,
+  transcodeToOpus,
 } from "../lib/media.ts";
 
 export const songRoutes = new Hono<AppEnv>();
@@ -136,6 +138,20 @@ songRoutes.post(
     console.error("duplicate detection failed:", err),
   );
 
+  // Kick off the Opus transcode in the background for lossless masters. The
+  // upload returns immediately; until stream_path lands, /stream falls back to
+  // the master, so nothing waits on ffmpeg. Fire-and-forget, like dupes above.
+  if (isLosslessMaster(song.file_path)) {
+    transcodeToOpus(song.file_path)
+      .then(async (streamPath) => {
+        if (!streamPath) return;
+        await sql`
+          UPDATE songs SET stream_path = ${streamPath} WHERE id = ${song.id}
+        `;
+      })
+      .catch((err) => console.error("opus transcode failed:", err));
+  }
+
   return c.json(toPublicSong(song), 201);
 });
 
@@ -144,8 +160,17 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
   const song = await getSong(c.req.param("id")!);
   if (!song) return c.json({ error: "not_found" }, 404);
 
-  const abs = resolveMedia(song.file_path);
-  const info = await stat(abs).catch(() => null);
+  // Prefer the transcoded Opus copy when it exists (smaller = far better on
+  // mobile); otherwise stream the original master. If the Opus file is somehow
+  // missing on disk, fall back to the master rather than 404.
+  let servePath = song.stream_path ?? song.file_path;
+  let abs = resolveMedia(servePath);
+  let info = await stat(abs).catch(() => null);
+  if (!info && song.stream_path) {
+    servePath = song.file_path;
+    abs = resolveMedia(servePath);
+    info = await stat(abs).catch(() => null);
+  }
   if (!info) return c.json({ error: "file_missing" }, 404);
 
   const total = info.size;
@@ -153,7 +178,7 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
   // type (song.mime is often "audio/x-flac", "application/ogg", or empty,
   // which can make players refuse or mis-handle FLAC/OGG). Fall back to the
   // stored type only if the extension is unrecognised.
-  const extMime = mimeForAudioPath(song.file_path);
+  const extMime = mimeForAudioPath(servePath);
   const mime =
     extMime !== "application/octet-stream"
       ? extMime
@@ -179,7 +204,7 @@ songRoutes.get("/:id/stream", requireAuth, async (c) => {
         "content-type": mime,
         "cache-control": cacheControl,
         "accept-ranges": "bytes",
-        "x-accel-redirect": `${config.xaccelPrefix}/${encodeURI(song.file_path)}`,
+        "x-accel-redirect": `${config.xaccelPrefix}/${encodeURI(servePath)}`,
       },
     });
   }
@@ -332,6 +357,9 @@ songRoutes.delete("/:id", requireAuth, async (c) => {
 
   await sql`DELETE FROM songs WHERE id = ${song.id}`;
   await unlink(resolveMedia(song.file_path)).catch(() => {});
+  if (song.stream_path) {
+    await unlink(resolveMedia(song.stream_path)).catch(() => {});
+  }
   if (song.cover_path) {
     await unlink(resolveMedia(song.cover_path)).catch(() => {});
   }
