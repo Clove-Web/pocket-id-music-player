@@ -6,7 +6,6 @@
 import { sql } from "../db/index.ts";
 
 const HOSTS = [
-  "https://lrclib.net",
   "https://lrclib.schuh.wtf",
   "https://lyrics.lanyard.cafe",
   "https://lyrics.kie.ac",
