@@ -3,6 +3,15 @@ name = "doughmination-music"
 version = "1.0.0"
 edition = "2024"
 
+# Mobile (Android/iOS) builds the app as a shared library that the generated
+# Gradle/Xcode project loads and calls `run()` on. `staticlib`/`cdylib` are
+# what those toolchains link against; `rlib` is what the desktop `main.rs`
+# binary uses. The name must be a valid Rust identifier (no dashes), so it
+# differs from the package name — `main.rs` refers to it as this.
+[lib]
+name = "doughmination_music_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -17,16 +26,19 @@ serde_json = "1"
 # already-running window on Windows/Linux instead of spawning a new process.
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"
-discord_social_sdk = { git = "https://github.com/SafeShows/discord_social_sdk" }
 
-[target."cfg(any(target_os = \"windows\", target_os = \"linux\"))".dependencies]
-tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-
-# Rust bindings to the Discord Social SDK (safe wrapper crate).
+# Discord Social SDK (safe wrapper crate). Desktop-only: it ships prebuilt
+# native libs for macOS/Windows/Linux and has no Android/iOS build, so it's
+# gated to the desktop OSes here — Android/iOS skip it entirely (the Rust
+# side gates the matching code behind `cfg(desktop)`).
 # Repo: https://github.com/SafeShows/discord_social_sdk
 # You must separately download the prebuilt SDK from the Discord Developer
 # Portal — see the note above the discord_social_sdk/ folder in this crate.
+[target."cfg(any(target_os = \"windows\", target_os = \"linux\", target_os = \"macos\"))".dependencies]
 discord_social_sdk = { git = "https://github.com/SafeShows/discord_social_sdk", package = "discord_social_sdk" }
+
+[target."cfg(any(target_os = \"windows\", target_os = \"linux\"))".dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 # Upstream's ActivityGamePlatforms/ErrorKind::Other assume the SDK's raw
 # bitmask type is i32; bindgen emits u32 for it on this target, which fails
