@@ -5,6 +5,8 @@ name: release
 # The desktop job creates the release as a *draft*; the android job attaches
 # the APK last and then flips it to published + "latest", so the release only
 # goes live once all artifacts are present.
+# 
+# THIS FILE IS MADE BY CLAUDE, SO IF SHIT BREAKS, I'M SORRY!
 on:
   push:
     tags:
