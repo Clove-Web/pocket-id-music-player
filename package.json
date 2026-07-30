@@ -1,5 +1,5 @@
 {
-  "name": "music-monorepo",
+  "name": "doughmination-music-monorepo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,10 @@
     "migrate": "bun run --filter @musicapp/server migrate",
     "typecheck": "bun run --filter '*' typecheck",
     "desktop:dev": "cd apps/desktop/src-tauri && cargo tauri dev",
-    "desktop:build": "cd apps/desktop/src-tauri && cargo tauri build"
+    "desktop:build": "cd apps/desktop/src-tauri && cargo tauri build",
+    "android:init": "cd apps/desktop/src-tauri && cargo tauri android init",
+    "android:dev": "cd apps/desktop/src-tauri && cargo tauri android dev",
+    "android:build": "cd apps/desktop/src-tauri && cargo tauri android build --apk"
   },
   "dependencies": {
     "@dotenvx/dotenvx": "^1.0.0"

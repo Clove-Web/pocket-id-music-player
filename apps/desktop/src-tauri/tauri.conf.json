@@ -25,6 +25,12 @@
   },
   "plugins": {
     "deep-link": {
+      "mobile": [
+        {
+          "scheme": ["doughmination"],
+          "appLink": false
+        }
+      ],
       "desktop": {
         "schemes": ["doughmination"]
       }
