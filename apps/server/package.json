@@ -14,7 +14,7 @@
     "@musicapp/shared": "workspace:*",
     "hono": "^4.12.32",
     "ioredis": "^5.11.1",
-    "jose": "^5.10.0",
+    "jose": "^6.2.4",
     "music-metadata": "^10.9.1",
     "postgres": "^3.4.9"
   },
