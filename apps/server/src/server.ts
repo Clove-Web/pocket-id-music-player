@@ -97,6 +97,12 @@ app.get("/app.js", () => serveFile(join(webDist, "app.js"), "no-cache"));
 app.get("/styles.css", () => serveFile(join(webSrc, "styles.css"), "no-cache"));
 app.get("/favicon.png", () => serveFile(join(serverPublic, "favicon.png")));
 
+// Vanity redirect to the source repo. Must sit before the SPA catch-all
+// below, or the `*` route would swallow it and serve index.html instead.
+app.get("/download", (c) =>
+  c.redirect("https://github.com/doughmination/pocket-id-music-player/", 302),
+);
+
 // SPA fallback: any non-API route returns index.html. Also no-cache, so a
 // stale shell can't keep pointing the webview at an old asset.
 app.get("*", () => serveFile(join(webSrc, "index.html"), "no-cache"));
