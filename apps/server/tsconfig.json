@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // TS7 no longer auto-includes @types/bun the way TS5 did, so name it
+    // explicitly. This is the only package that uses Bun's globals
+    // (`Bun`, `import.meta.dir`), so it's scoped here rather than the base.
+    "types": ["bun"]
+  },
   "include": ["src"]
 }
