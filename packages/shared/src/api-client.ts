@@ -38,6 +38,17 @@ function url(path: string): string {
   return `${baseUrl}${path}`;
 }
 
+// Resolve an API path to an ABSOLUTE url (scheme + host). Most calls use
+// same-origin relative urls, but some consumers need a full url that resolves
+// off-device — e.g. an album cover handed to Discord Rich Presence, which
+// Discord fetches from its own servers, not the user's machine. Uses the
+// configured base (desktop) or the current origin (web / remote-loaded shell).
+export function absoluteApiUrl(path: string): string {
+  const base =
+    baseUrl || (typeof location !== "undefined" ? location.origin : "");
+  return `${base}${path}`;
+}
+
 // Every request in this module goes through this wrapper (it shadows the
 // global `fetch`). It attaches the bearer token when one is set (native
 // clients). Web sets no token and keeps fetch's default same-origin
