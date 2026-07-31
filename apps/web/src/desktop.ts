@@ -9,6 +9,7 @@ import {
   startNativeLogin,
   completeNativeLogin,
   establishSessionCookie,
+  absoluteApiUrl,
   type Song,
 } from "@musicapp/shared";
 
@@ -182,11 +183,14 @@ export async function syncDiscordPresence(song: Song | null): Promise<void> {
       await invoke("clear_presence");
       return;
     }
+    // Absolute URL so Discord (which fetches it server-side) can load the art.
+    const coverUrl = song.coverUrl ? absoluteApiUrl(song.coverUrl) : null;
     await invoke("set_now_playing", {
       title: song.title,
       artist: song.artist,
       album: song.album,
       durationS: song.durationS,
+      coverUrl,
     });
   } catch {
     /* best-effort — never blocks playback */

@@ -266,7 +266,11 @@ songRoutes.get("/:id/lyrics", requireAuth, async (c) => {
   return c.json(lyrics);
 });
 
-songRoutes.get("/:id/cover", requireAuth, async (c) => {
+// Public on purpose (no requireAuth): Discord Rich Presence shows the album
+// art as the large image, and Discord fetches that URL from its own servers
+// with no session. Covers are unlisted — reachable only via the song's random
+// UUID — and it's only album art; the audio stream stays auth-gated.
+songRoutes.get("/:id/cover", async (c) => {
   const song = await getSong(c.req.param("id")!);
   if (!song?.cover_path) return c.json({ error: "not_found" }, 404);
 
