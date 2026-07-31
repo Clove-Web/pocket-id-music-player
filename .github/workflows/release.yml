@@ -40,7 +40,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The Discord SDK binaries (*.dylib/*.so/*.aar/*.dbg) are tracked in
           # Git LFS. Without this the runner only gets pointer files and the
@@ -117,7 +117,7 @@ jobs:
       # No `lfs: true` here: the Android build gates the Discord SDK out
       # entirely (see Cargo.toml), so the LFS-tracked native libs aren't
       # needed — only the plain-text vendor manifests, which aren't in LFS.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
 
