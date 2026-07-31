@@ -21,7 +21,7 @@
         "@musicapp/shared": "workspace:*",
         "hono": "^4.12.32",
         "ioredis": "^5.11.1",
-        "jose": "^5.10.0",
+        "jose": "^6.2.4",
         "music-metadata": "^10.9.1",
         "postgres": "^3.4.9",
       },
@@ -166,7 +166,7 @@
 
     "is-stream": ["is-stream@4.0.1", "", {}, "sha512-Dnz92NInDqYckGEUJv689RbRiTSEHCQ7wOVeALbkOz999YpqT46yMRIGtSNl2iCL1waAZSx40+h59NV/EwzV/A=="],
 
-    "jose": ["jose@5.10.0", "", {}, "sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg=="],
+    "jose": ["jose@6.2.4", "", {}, "sha512-N8acGzVsQy6M/fjFcxtysNc4Q379TcM5dM/qKkNtsHFji88yANnXTr7BLeP75iPnFwBfQzM/jg2BZ9+HZrHCZA=="],
 
     "link": ["link@2.1.2", "", { "bin": { "link": "dist/cli.js" } }, "sha512-n+OitQgtITNBGiWmEMgMiXo/fkf3yeyLm2nXm87vO4DDpaYrx57AZs/PMDk25qJIv+l586V226B2mA1H/n9zvg=="],
 
