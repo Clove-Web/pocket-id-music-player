@@ -1,9 +1,7 @@
 services:
   music:
     user: 1000:1002
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: doughmination/doughmination-music:latest
     container_name: music
     ports:
       - "127.0.0.1:4060:4060"
