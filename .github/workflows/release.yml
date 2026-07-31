@@ -123,7 +123,7 @@ jobs:
 
       # Gradle can't run on JDK 25 (the class-file-version error); 17 is the
       # Android reference JDK. This sets JAVA_HOME for the Gradle invocation.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
