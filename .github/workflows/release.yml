@@ -77,7 +77,7 @@ jobs:
 
       - run: bun install
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Run the AppImage tools in extract-and-run mode so they don't need
