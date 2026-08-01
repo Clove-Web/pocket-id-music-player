@@ -29,6 +29,12 @@ pub enum PresenceUpdate {
         // reachable without auth (see the public /cover route). Empty/None
         // just falls back to the app's default icon.
         cover_url: Option<String>,
+        // Current playback position in seconds, so a resumed track's elapsed
+        // bar starts from the right place instead of from zero.
+        position_s: Option<f64>,
+        // When false (paused) we omit the timestamps entirely, which stops
+        // Discord from animating the elapsed/remaining bar past where it is.
+        playing: bool,
     },
     Clear,
 }
@@ -42,7 +48,7 @@ pub fn spawn(application_id: u64, rx: Receiver<PresenceUpdate>) {
             discord_social_sdk::run_callbacks();
 
             match rx.try_recv() {
-                Ok(PresenceUpdate::NowPlaying { title, artist, album, duration_s, cover_url }) => {
+                Ok(PresenceUpdate::NowPlaying { title, artist, album, duration_s, cover_url, position_s, playing }) => {
                     let mut activity = Activity::new();
                     activity.set_activity_type(ActivityType::Listening);
                     activity.set_details(Some(&title));
@@ -55,17 +61,27 @@ pub fn spawn(application_id: u64, rx: Receiver<PresenceUpdate>) {
                     };
                     activity.set_state(Some(&state));
 
-                    if let Some(duration_s) = duration_s {
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        let end_ms = now_ms + (duration_s * 1000.0) as u64;
+                    // Only show the elapsed/remaining bar while actually
+                    // playing. When paused we omit timestamps so Discord stops
+                    // advancing the bar (it would otherwise keep ticking toward
+                    // `end` even though playback is stopped).
+                    if playing {
+                        if let Some(duration_s) = duration_s {
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
+                            // Anchor `start` back by the current position so the
+                            // bar reflects real elapsed time on a resumed track.
+                            let position_ms = (position_s.unwrap_or(0.0).max(0.0) * 1000.0) as u64;
+                            let start_ms = now_ms.saturating_sub(position_ms);
+                            let end_ms = start_ms + (duration_s * 1000.0) as u64;
 
-                        let mut timestamps = ActivityTimestamps::new();
-                        timestamps.set_start(now_ms);
-                        timestamps.set_end(end_ms);
-                        activity.set_timestamps(Some(&timestamps));
+                            let mut timestamps = ActivityTimestamps::new();
+                            timestamps.set_start(start_ms);
+                            timestamps.set_end(end_ms);
+                            activity.set_timestamps(Some(&timestamps));
+                        }
                     }
 
                     // Album art as the large presence image. large_image takes

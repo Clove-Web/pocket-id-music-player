@@ -43,6 +43,8 @@ fn set_now_playing(
     album: Option<String>,
     #[allow(non_snake_case)] durationS: Option<f64>,
     #[allow(non_snake_case)] coverUrl: Option<String>,
+    #[allow(non_snake_case)] positionS: Option<f64>,
+    playing: bool,
     handle: State<DiscordHandle>,
 ) -> Result<(), String> {
     handle
@@ -55,6 +57,8 @@ fn set_now_playing(
             album,
             duration_s: durationS,
             cover_url: coverUrl,
+            position_s: positionS,
+            playing,
         })
         .map_err(|e| e.to_string())
 }
@@ -83,6 +87,8 @@ fn set_now_playing(
     album: Option<String>,
     #[allow(non_snake_case)] durationS: Option<f64>,
     #[allow(non_snake_case)] coverUrl: Option<String>,
+    #[allow(non_snake_case)] positionS: Option<f64>,
+    playing: bool,
 ) -> Result<(), String> {
     Ok(())
 }
