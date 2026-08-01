@@ -54,11 +54,34 @@ const state = {
   adminCounts: { duplicates: 0, linkRequests: 0 },
 };
 
+// Discord presence is refreshed whenever the *song* or the *play/pause* state
+// changes — not on every timeupdate — so pausing freezes/removes the elapsed
+// bar and resuming a already-loaded track re-activates presence. Deduped by
+// (songId, playing) so the constant "change" stream doesn't spam Discord.
+let presSongId: string | null = null;
+let presPlaying = false;
+let presInit = false;
+function maybeUpdatePresence(): void {
+  const song = player.current;
+  const songId = song?.id ?? null;
+  const playing = player.playing;
+  if (presInit && songId === presSongId && playing === presPlaying) return;
+  presInit = true;
+  presSongId = songId;
+  presPlaying = playing;
+  if (!song) {
+    void syncDiscordPresence(null);
+    return;
+  }
+  void syncDiscordPresence(song, { playing, positionS: player.progress.current });
+}
+
 let lastSave = 0;
 player.events.on("change", () => {
   renderPlayerBar();
   syncLyrics();
   checkScrobbleThreshold();
+  maybeUpdatePresence();
   // Cheap: just keep the active row's play/pause (animation) state in sync.
   // Which row is active is handled on trackchange, so no full sweep here.
   document
@@ -95,7 +118,9 @@ function onTrackStarted(song: Song): void {
 }
 player.events.on("trackchange", (song) => {
   onTrackStarted(song);
-  void syncDiscordPresence(song);
+  // Push presence immediately for the new track (with its current position),
+  // rather than waiting for the next "change" tick. Deduped downstream.
+  maybeUpdatePresence();
   highlightPlayingRow(); // move the now-playing bars to the new track's row
 });
 

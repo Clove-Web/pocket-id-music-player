@@ -175,7 +175,14 @@ export function clearDesktopToken(): void {
 // Forwards the currently playing track to the Rust side, which owns the
 // actual Discord Social SDK client. Fire-and-forget: presence is cosmetic
 // and should never block or break playback.
-export async function syncDiscordPresence(song: Song | null): Promise<void> {
+//
+// `playback` carries the live play/pause state and current position so Rust
+// can build (or omit) the elapsed-time bar: paused → no bar, and resuming
+// mid-track → the bar starts from the right place instead of from zero.
+export async function syncDiscordPresence(
+  song: Song | null,
+  playback?: { playing: boolean; positionS: number },
+): Promise<void> {
   if (!isDesktop) return;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -191,6 +198,8 @@ export async function syncDiscordPresence(song: Song | null): Promise<void> {
       album: song.album,
       durationS: song.durationS,
       coverUrl,
+      positionS: playback?.positionS ?? 0,
+      playing: playback?.playing ?? true,
     });
   } catch {
     /* best-effort — never blocks playback */
