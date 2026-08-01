@@ -69,11 +69,15 @@ function maybeUpdatePresence(): void {
   presInit = true;
   presSongId = songId;
   presPlaying = playing;
-  if (!song) {
+  // Clear presence when there's no song OR when paused. Discord shows its own
+  // idle "elapsed" timer for a Listening activity that has no timestamps, so
+  // the only way to show *nothing* while paused is to remove the activity. It
+  // comes back with a proper progress bar the moment playback resumes.
+  if (!song || !playing) {
     void syncDiscordPresence(null);
     return;
   }
-  void syncDiscordPresence(song, { playing, positionS: player.progress.current });
+  void syncDiscordPresence(song, { playing: true, positionS: player.progress.current });
 }
 
 let lastSave = 0;

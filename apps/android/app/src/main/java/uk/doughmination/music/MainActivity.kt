@@ -9,7 +9,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
@@ -83,9 +86,35 @@ class MainActivity : AppCompatActivity(), WebBridge.Host {
             useWideViewPort = true
             loadWithOverviewMode = true
         }
+        // Bring-up diagnostics: allow chrome://inspect and forward the page's
+        // console to logcat (tag DMND-WEB), so we can see whether the web app
+        // detects the native bridge. Safe to leave on for a private app; gate
+        // behind BuildConfig.DEBUG later if desired.
+        WebView.setWebContentsDebuggingEnabled(true)
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(m: ConsoleMessage): Boolean {
+                Log.i("DMND-WEB", "${m.message()}  (${m.sourceId()}:${m.lineNumber()})")
+                return true
+            }
+        }
+
         // Keep all navigation (including the OIDC login redirect) inside the
-        // WebView so the session cookie is set on our origin.
-        webView.webViewClient = WebViewClient()
+        // WebView so the session cookie is set on our origin. On each load,
+        // probe whether the native bridge is visible to the page and whether
+        // the web app is still using a WebView <audio> element (which would
+        // mean it did NOT hand off to native playback).
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                view.evaluateJavascript(
+                    "console.log('DMND-probe:' +" +
+                        " ' DmndNative=' + (typeof window.DmndNative) +" +
+                        " ' ready=' + (window.DmndNative ? typeof window.DmndNative.ready : 'n/a') +" +
+                        " ' cb=' + (typeof window.__dmndNative) +" +
+                        " ' audioEls=' + document.querySelectorAll('audio').length);",
+                    null,
+                )
+            }
+        }
         webView.addJavascriptInterface(WebBridge(this), "DmndNative")
 
         if (savedInstanceState == null) {
