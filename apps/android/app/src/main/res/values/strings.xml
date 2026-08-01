@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Doughmination Music</string>
+    <string name="playback_channel_name">Playback</string>
+    <string name="playback_channel_description">Now playing controls</string>
+</resources>
