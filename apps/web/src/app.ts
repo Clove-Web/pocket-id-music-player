@@ -25,11 +25,15 @@ import {
   isDesktop,
   syncDiscordPresence,
 } from "./desktop.ts";
+import { initNative } from "./native.ts";
 
 initDesktopBridge();
 
 const root = document.getElementById("app")!;
 const player = new Player();
+// Inside the native Android shell, route lock-screen/notification transport
+// buttons into the queue. No-op on web/desktop.
+initNative(player);
 
 type View =
   | { kind: "library" }

@@ -6,6 +6,7 @@
 import type { Song } from "@musicapp/shared";
 
 import { Emitter } from "./events.ts";
+import { createAudioElement, hasNativeHost, type MediaEl } from "./native-audio.ts";
 import { localStoragePrefs, type Prefs, type PrefsStorage } from "./storage.ts";
 
 export type RepeatMode = Prefs["repeat"];
@@ -19,7 +20,10 @@ type PlayerEvents = {
 export class Player {
   readonly events = new Emitter<PlayerEvents>();
 
-  private audio = new Audio();
+  // A real <audio> on web/desktop; a native Media3-backed shim inside the
+  // Android shell (see native-audio.ts). The Player logic is identical either
+  // way — only the backend differs.
+  private audio: MediaEl = createAudioElement();
   private storage: PrefsStorage;
   private queue: Song[] = []; // playback order (shuffled or not)
   private originalOrder: Song[] = []; // order as given to playQueue, never shuffled
@@ -50,7 +54,8 @@ export class Player {
     this.audio.setAttribute("controlsList", "nodownload");
     if (typeof document !== "undefined") {
       this.audio.style.display = "none";
-      document.body.appendChild(this.audio);
+      // Only a real <audio> is a DOM node; the native shim isn't appended.
+      if (this.audio instanceof HTMLElement) document.body.appendChild(this.audio);
     }
 
     this.audio.addEventListener("ended", () => this.onEnded());
@@ -113,6 +118,17 @@ export class Player {
   }
 
   private updateMediaMetadata(song: Song): void {
+    // Hand metadata to the native backend first (its OS notification needs it),
+    // independently of whether the web MediaSession API is available. No-op on
+    // a real <audio> element.
+    this.audio.setMetadata?.({
+      title: song.title,
+      artist: song.artist,
+      album: song.album ?? "",
+      coverUrl: song.coverUrl ? absoluteUrl(song.coverUrl) : null,
+      durationS: song.durationS,
+    });
+
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -343,13 +359,20 @@ export class Player {
   // any failure leaves plain <audio> playback untouched.
   private setupGraph(): void {
     if (this.ctx) return;
+    // Native (Android) audio can't be tapped by Web Audio; skip entirely so we
+    // don't construct a throwaway AudioContext on every track (which would leak
+    // contexts and eventually hit the browser's hard limit).
+    if (hasNativeHost()) return;
     try {
       const Ctx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext })
           .webkitAudioContext;
       const ctx = new Ctx();
-      const src = ctx.createMediaElementSource(this.audio);
+      // Only a real HTMLMediaElement can feed Web Audio. With the native
+      // backend this throws and we fall through to the catch — the visualizer
+      // is simply disabled on Android (native owns the audio pipeline).
+      const src = ctx.createMediaElementSource(this.audio as unknown as HTMLMediaElement);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 128;
       analyser.smoothingTimeConstant = 0.8;
