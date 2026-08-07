@@ -21,7 +21,7 @@
     "android:build": "cd apps/desktop/src-tauri && cargo tauri android build --apk"
   },
   "dependencies": {
-    "@dotenvx/dotenvx": "^2.19.1"
+    "@dotenvx/dotenvx": "^2.19.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
