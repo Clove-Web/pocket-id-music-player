@@ -84,7 +84,7 @@ jobs:
           echo "path=apps/android/$OUT" >> "$GITHUB_OUTPUT"
 
       # Always attach the APK to the run so it's downloadable even without a release.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-apk
           path: ${{ steps.apk.outputs.path }}
