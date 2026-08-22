@@ -1390,7 +1390,7 @@ function wireLinkRequestActions(): void {
   document.querySelectorAll("[data-approve]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await api.decideLinkRequest((btn as HTMLElement).dataset.approve!, "approve");
-      await refreshAdminCounts();
+      await Promise.all([refreshAdminCounts(), loadSongs()]);
       renderSidebar();
       renderMain();
     });
