@@ -45,6 +45,47 @@ type View =
   | { kind: "linkRequests" }
   | { kind: "settings" };
 
+// --- URL routing ------------------------------------------------------------
+// Every view maps to a real, hotlinkable path (the server's catch-all route
+// serves index.html for any of these, so a deep link works on first load too
+// — see apps/server/src/server.ts). Kept as simple bidirectional mappers
+// rather than a router library: the view set is small and fixed.
+
+function viewToPath(view: View): string {
+  switch (view.kind) {
+    case "library": return "/";
+    case "browse": return "/browse";
+    case "artists": return "/artists";
+    case "artist": return `/artist/${view.id}`;
+    case "playlist": return `/playlist/${view.id}`;
+    case "duplicates": return "/admin/duplicates";
+    case "linkRequests": return "/admin/link-requests";
+    case "settings": return "/settings";
+  }
+}
+
+function pathToView(pathname: string): View {
+  const [head, id] = pathname.split("/").filter(Boolean);
+  if (head === "browse") return { kind: "browse" };
+  if (head === "artists") return { kind: "artists" };
+  if (head === "artist" && id) return { kind: "artist", id };
+  if (head === "playlist" && id) return { kind: "playlist", id };
+  if (head === "admin" && id === "duplicates") return { kind: "duplicates" };
+  if (head === "admin" && id === "link-requests") return { kind: "linkRequests" };
+  if (head === "settings") return { kind: "settings" };
+  return { kind: "library" };
+}
+
+// Every user-triggered view change goes through here so the address bar
+// always matches what's on screen (and so it's shareable/hotlinkable).
+// popstate (back/forward) sets state.view + renders directly instead, since
+// the URL there is already correct — see the listener below.
+function navigate(view: View): void {
+  state.view = view;
+  history.pushState(null, "", viewToPath(view));
+  render();
+}
+
 const state = {
   me: null as Me | null,
   songs: [] as Song[],
@@ -219,11 +260,29 @@ async function boot(): Promise<void> {
   }
   await Promise.all([loadSongs(), loadPlaylists()]);
   if (state.me.isAdmin) await refreshAdminCounts();
+
+  const initialView = pathToView(window.location.pathname);
+  const adminOnly = initialView.kind === "duplicates" || initialView.kind === "linkRequests";
+  state.view = adminOnly && !state.me.isAdmin ? { kind: "library" } : initialView;
+
   restoreNowPlaying();
   handleLastfmRedirect();
   render();
   startVisualizer();
 }
+
+// Back/forward: the URL is already correct, so just re-derive the view from
+// it and render — no history.pushState (that would double up entries).
+window.addEventListener("popstate", () => {
+  if (!state.me) {
+    renderLogin();
+    return;
+  }
+  const view = pathToView(window.location.pathname);
+  const adminOnly = view.kind === "duplicates" || view.kind === "linkRequests";
+  state.view = adminOnly && !state.me.isAdmin ? { kind: "library" } : view;
+  render();
+});
 
 // After the Last.fm "Connect" handshake, the backend redirects back here
 // with ?lastfm=connected|error. Surface that, land on Settings, and drop
@@ -237,9 +296,7 @@ function handleLastfmRedirect(): void {
   if (result === "connected") flash("Last.fm connected.");
   else if (result === "error") flash("Couldn't connect Last.fm. Try again?");
 
-  params.delete("lastfm");
-  const qs = params.toString();
-  history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  history.replaceState(null, "", viewToPath(state.view));
 }
 
 async function loadSongs(): Promise<void> {
@@ -296,9 +353,21 @@ function renderLogin(): void {
   // Desktop can't: SSO/passkeys don't work in the embedded webview and the
   // cookie would land in the wrong jar. Instead it opens the system browser
   // and comes back via the doughmination:// deeplink (see startDesktopLogin).
+  // Web-only: carry the deep link the user landed on (or was bounced to
+  // from an expired session) through the SSO round trip, so e.g. a shared
+  // /artist/<id> link still opens that page after signing in, instead of
+  // always dropping back to the library. Server validates this is a
+  // same-origin path before honoring it — see routes/auth.ts.
+  const returnPath = window.location.pathname + window.location.search;
+  const loginHref =
+    "/api/auth/login" +
+    (returnPath && returnPath !== "/"
+      ? `?redirect=${encodeURIComponent(returnPath)}`
+      : "");
+
   const button = isDesktop
     ? `<button class="btn btn-primary" id="login-btn">🔑 Sign in with SSO</button>`
-    : `<a class="btn btn-primary" href="/api/auth/login">🔑 Sign in with SSO</a>`;
+    : `<a class="btn btn-primary" href="${loginHref}">🔑 Sign in with SSO</a>`;
 
   root.innerHTML = `
     <div class="login">
@@ -400,8 +469,7 @@ function renderSidebar(): void {
         | "duplicates"
         | "linkRequests"
         | "settings";
-      state.view = { kind };
-      render();
+      navigate({ kind });
     });
   });
 
@@ -409,8 +477,7 @@ function renderSidebar(): void {
 
   el.querySelectorAll("[data-playlist]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.view = { kind: "playlist", id: (btn as HTMLElement).dataset.playlist! };
-      render();
+      navigate({ kind: "playlist", id: (btn as HTMLElement).dataset.playlist! });
     });
   });
 
@@ -959,8 +1026,7 @@ async function renderBrowse(el: HTMLElement): Promise<void> {
 
     results.querySelectorAll("[data-open]").forEach((b) => {
       b.addEventListener("click", () => {
-        state.view = { kind: "playlist", id: (b as HTMLElement).dataset.open! };
-        render();
+        navigate({ kind: "playlist", id: (b as HTMLElement).dataset.open! });
       });
     });
   };
@@ -1004,8 +1070,7 @@ async function renderArtists(el: HTMLElement): Promise<void> {
 
     results.querySelectorAll("[data-open]").forEach((b) => {
       b.addEventListener("click", () => {
-        state.view = { kind: "artist", id: (b as HTMLElement).dataset.open! };
-        render();
+        navigate({ kind: "artist", id: (b as HTMLElement).dataset.open! });
       });
     });
   };
@@ -1051,8 +1116,7 @@ async function renderArtistView(el: HTMLElement, id: string): Promise<void> {
 // names in song rows, the player bar, and the lyrics overlay.
 function openArtist(id: string): void {
   if (lyricsState.open) toggleLyrics();
-  state.view = { kind: "artist", id };
-  render();
+  navigate({ kind: "artist", id });
 }
 
 // Create a brand-new artist page. Shared by the "Artists" browse page and
@@ -1463,9 +1527,8 @@ async function renderPlaylistView(el: HTMLElement, id: string): Promise<void> {
   document.getElementById("del-playlist")?.addEventListener("click", async () => {
     if (!confirm(`Delete "${pl.name}"?`)) return;
     await api.deletePlaylist(id);
-    state.view = { kind: "library" };
     await loadPlaylists();
-    render();
+    navigate({ kind: "library" });
   });
 
   const coverInput = document.getElementById("playlist-cover-input") as HTMLInputElement | null;

@@ -102,6 +102,11 @@ export type Handshake = {
     appChallenge: string;
     redirect: string;
   };
+  // Web only: the same-origin path (already validated — see routes/auth.ts)
+  // to send the browser back to after callback, so a deep link (e.g. a
+  // shared /artist/<id> url) survives the SSO round trip instead of always
+  // landing on "/".
+  webRedirect?: string;
 };
 
 export async function saveHandshake(data: Handshake): Promise<string> {

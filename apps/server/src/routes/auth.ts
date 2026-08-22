@@ -68,8 +68,25 @@ authRoutes.get("/login", loginLimit, async (c) => {
     native = { appChallenge, redirect };
   }
 
+  // Web deep link ("?redirect=/artist/<id>"): only ever a same-origin
+  // relative path, never a full URL, or this becomes an open redirect.
+  // Reject anything that could be parsed as protocol-relative ("//host/…")
+  // or a backslash trick some browsers still treat the same way.
+  let webRedirect: string | undefined;
+  if (!native) {
+    const requested = c.req.query("redirect");
+    if (
+      requested &&
+      requested.startsWith("/") &&
+      !requested.startsWith("//") &&
+      !requested.startsWith("/\\")
+    ) {
+      webRedirect = requested;
+    }
+  }
+
   // Stash the handshake in Redis; the cookie only holds its opaque id.
-  const handshakeId = await saveHandshake({ state, nonce, verifier, native });
+  const handshakeId = await saveHandshake({ state, nonce, verifier, native, webRedirect });
   setCookie(c, cookieNames.handshake, handshakeId, secureCookieOpts);
 
   const url = await buildAuthUrl({
@@ -145,9 +162,10 @@ authRoutes.get("/callback", async (c) => {
     return c.html(returnToAppPage(dest.toString()));
   }
 
-  // Web flow: httpOnly session cookie + back to the app.
+  // Web flow: httpOnly session cookie + back to the app (or wherever the
+  // deep link that sent them to login pointed, if any — see /login above).
   setCookie(c, cookieNames.session, sessionId, secureCookieOpts);
-  return c.redirect("/");
+  return c.redirect(hs.webRedirect ?? "/");
 });
 
 // Native clients trade the one-time deeplink code (+ the PKCE verifier that

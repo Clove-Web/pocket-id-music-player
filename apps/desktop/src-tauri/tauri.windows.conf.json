@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": [
+      "discord_social_sdk/bin/release/discord_partner_sdk.dll"
+    ]
+  }
+}
