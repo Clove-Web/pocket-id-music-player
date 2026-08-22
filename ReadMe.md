@@ -98,6 +98,30 @@ bun run android:dev
 bun run android:build     # produces an APK
 ```
 
+### Linux runtime requirement
+
+The Linux build (AppImage) does **not** bundle WebKitGTK — you need
+`webkit2gtk-4.1` (Arch/Fedora package name; Debian/Ubuntu: `libwebkit2gtk-4.1-0`)
+installed system-wide for the app to launch. This is deliberate, not an
+oversight: an AppImage-bundled WebKitGTK build has been observed to hard-crash
+at startup (`Could not create default EGL display: EGL_BAD_PARAMETER`) on at
+least one real Wayland compositor + modern Mesa combination that the same
+machine's system-installed WebKitGTK handles fine — GPU/Wayland-coupled
+libraries like this are fragile to bundle across distros, which is exactly why
+every other WebKitGTK-based Linux package (`.deb`/`.rpm`) declares it as a
+runtime dependency instead of shipping its own copy. This app does the same.
+
+```bash
+# Arch / Manjaro
+sudo pacman -S webkit2gtk-4.1
+
+# Debian / Ubuntu
+sudo apt install libwebkit2gtk-4.1-0
+
+# Fedora
+sudo dnf install webkit2gtk4.1
+```
+
 ## Deployment
 
 A production image is published as `doughmination/doughmination-music` and can be

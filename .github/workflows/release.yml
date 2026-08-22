@@ -124,6 +124,48 @@ jobs:
           # failure shows the real error instead of just "failed to run …".
           args: ${{ matrix.args }} --verbose
 
+      # linuxdeploy bundles WebKitGTK (from this Ubuntu 22.04 image) straight
+      # into the AppImage. That bundled build has been confirmed to hard-crash
+      # at startup — "Could not create default EGL display: EGL_BAD_PARAMETER"
+      # before it ever touches a GPU — on at least one real Wayland compositor
+      # + modern Mesa combination where the SAME machine's system-installed
+      # WebKitGTK works fine. GPU/Wayland-coupled libraries like this are
+      # fragile to bundle across distros — it's exactly why every other
+      # WebKitGTK-based Linux package (.deb/.rpm) declares it as a runtime
+      # dependency instead of shipping its own copy. So: strip it out of the
+      # AppImage here and force it onto the host's own webkit2gtk-4.1 (users
+      # need that installed — see ReadMe.md's Linux runtime requirement).
+      # Re-uploads over what tauri-action just attached to the draft release.
+      - name: strip bundled WebKitGTK from the AppImage
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          APPIMAGE=$(find apps/desktop/src-tauri/target -maxdepth 5 -name "*.AppImage" | head -1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "::error::No .AppImage found to patch"
+            exit 1
+          fi
+
+          DIR=$(cd "$(dirname "$APPIMAGE")" && pwd)
+          NAME=$(basename "$APPIMAGE")
+          cd "$DIR"
+          chmod +x "$NAME"
+          ./"$NAME" --appimage-extract >/dev/null
+
+          rm -f squashfs-root/usr/lib/libwebkit2gtk-4.1.so.0
+          rm -rf squashfs-root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1
+
+          curl -sSL -o appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          # Same FUSE-less workaround as the tauri-action step above.
+          APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool squashfs-root "$NAME"
+
+          echo "Patched AppImage: $DIR/$NAME"
+          gh release upload "$TAG" "$NAME" --clobber
+
   android:
     # Builds and publishes the SIGNED native Android APK (apps/android): a
     # WebView shell around the site plus a native Media3 playback service
