@@ -47,8 +47,7 @@
     ],
     "macOS": {
       "frameworks": [
-        "discord_social_sdk/lib/release/libdiscord_partner_sdk.dylib",
-        "discord_social_sdk/lib/release/libdiscord_krisp.dylib"
+        "discord_social_sdk/lib/release/libdiscord_partner_sdk.dylib"
       ]
     }
   }

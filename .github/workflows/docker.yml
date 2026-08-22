@@ -20,9 +20,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # No lfs: the server image doesn't use the Git-LFS'd Discord SDK binaries
-      # (those are desktop-only), so pointer files are fine and the build is
-      # faster.
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4

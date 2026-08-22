@@ -1,11 +1,19 @@
 name: release
 
 # Builds every platform for one tag and publishes a single GitHub Release:
-# desktop (macOS/Linux/Windows via tauri-action) plus a signed Android APK.
-# The desktop job creates the release as a *draft*; the android job attaches
-# the APK last and then flips it to published + "latest", so the release only
-# goes live once all artifacts are present.
-# 
+# desktop (macOS/Linux/Windows via tauri-action) plus the signed native
+# Android APK (apps/android — a WebView shell around the site with a native
+# Media3 playback service for background/locked playback; NOT built via the
+# Tauri Android target). The desktop job creates the release as a *draft*;
+# the android job attaches the APK last and then flips it to published +
+# "latest", so the release only goes live once all artifacts are present.
+#
+# Used to be two workflows (this one covered desktop + a Tauri-built Android
+# APK; a separate android.yml covered the real apps/android APK under its own
+# "android-vX" tag). Merged into this single file/tag/release on 2026-08-22 —
+# the Tauri Android target never shipped background playback, so it was
+# always the wrong artifact to publish.
+#
 # THIS FILE IS MADE BY CLAUDE, SO IF SHIT BREAKS, I'M SORRY!
 on:
   workflow_dispatch:
@@ -13,6 +21,10 @@ on:
       version:
         description: "Release tag to create, e.g. v1.0.0"
         required: true
+        type: string
+      siteUrl:
+        description: "Override the site the Android WebView loads (optional)"
+        required: false
         type: string
 
 jobs:
@@ -41,11 +53,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          # The Discord SDK binaries (*.dylib/*.so/*.aar/*.dbg) are tracked in
-          # Git LFS. Without this the runner only gets pointer files and the
-          # Tauri/cargo build fails to link libdiscord_partner_sdk.
-          lfs: true
+
+      # The Discord SDK binaries used to be committed via Git LFS — 745MB of
+      # debug/iOS/Android builds this project never uses, re-fetched in full
+      # by all 3 matrix jobs on every run, which blew through GitHub's free
+      # LFS bandwidth budget and blocked every release build. Now a lean
+      # (~17MB), release-only, all-desktop-platforms re-host lives on our own
+      # CDN instead — not subject to that quota. See .gitignore for why the
+      # directory isn't tracked, and build.rs for how it's consumed once
+      # unpacked here.
+      - name: fetch Discord Social SDK
+        shell: bash
+        run: |
+          curl -sSL -o discord-sdk.zip "https://m.doughmination.gay/sdks/discord-sdk.zip"
+          unzip -q discord-sdk.zip -d apps/desktop/src-tauri
+          rm discord-sdk.zip
 
       - uses: oven-sh/setup-bun@v2
 
@@ -103,9 +125,13 @@ jobs:
           args: ${{ matrix.args }} --verbose
 
   android:
-    # Runs after the desktop matrix so the draft release already exists to
-    # attach the APK to. If any desktop build fails, this is skipped and the
-    # release stays a draft — we don't publish a half-built release.
+    # Builds and publishes the SIGNED native Android APK (apps/android): a
+    # WebView shell around the site plus a native Media3 playback service
+    # (background/locked playback + a media notification) — NOT the Tauri
+    # Android target, which can't provide that. Runs after the desktop matrix
+    # so the draft release already exists to attach the APK to. If any desktop
+    # build fails, this is skipped and the release stays a draft — we don't
+    # publish a half-built release.
     needs: build
     runs-on: ubuntu-latest
 
@@ -114,81 +140,45 @@ jobs:
       contents: write
 
     steps:
-      # No `lfs: true` here: the Android build gates the Discord SDK out
-      # entirely (see Cargo.toml), so the LFS-tracked native libs aren't
-      # needed — only the plain-text vendor manifests, which aren't in LFS.
       - uses: actions/checkout@v7
 
-      - uses: oven-sh/setup-bun@v2
-
       # Gradle can't run on JDK 25 (the class-file-version error); 17 is the
-      # Android reference JDK. This sets JAVA_HOME for the Gradle invocation.
+      # Android reference JDK.
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Provides sdkmanager and accepts the SDK licenses.
+      - uses: android-actions/setup-android@v3
+
+      # Make sure the exact platform + build-tools the module targets are present.
+      - name: install SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          gradle-version: "8.9"
 
-      # A universal APK compiles all four Android ABIs — cache the Rust build
-      # so reruns aren't a cold 4-target compile.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri
-
-      # Pin the NDK rather than trust whatever the runner image ships.
-      - uses: nttld/setup-ndk@v1
-        id: ndk
-        with:
-          ndk-version: r27
-          add-to-path: false
-
-      - run: bun install
-
-      # gen/android is gitignored, so regenerate it on the runner. The Android
-      # SDK is preinstalled on the runner (ANDROID_HOME is set); NDK_HOME comes
-      # from the setup-ndk step above.
-      - name: init Android project
-        working-directory: apps/desktop/src-tauri
-        env:
-          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        # Use the locally-installed CLI (bun run tauri) rather than `bunx`.
-        # Tauri's generated Gradle project builds the Rust code per-ABI by
-        # re-invoking the CLI as `bun run tauri …`, which needs a `tauri`
-        # package.json script + @tauri-apps/cli as a dep. `bunx` leaves neither
-        # in place, so that nested call fails with `Script not found "tauri"`.
-        run: bun run tauri android init
-
-      # `gen/android` is wiped and regenerated by `android init` above, which
-      # ships Tauri's DEFAULT launcher icon. Our real icons live in the repo at
-      # icons/android/ — re-apply them over the generated res/ dir (same reason
-      # signing has to be re-patched below: nothing in gen/ is committed).
-      - name: apply Android app icons
-        working-directory: apps/desktop/src-tauri
-        # `cp -r src/. dest/` merges contents into the existing res/ dirs
-        # (overwriting the default icons) instead of nesting them.
-        run: cp -r icons/android/. gen/android/app/src/main/res/
-
-      # Inject the release signingConfig into the freshly generated
-      # build.gradle.kts, then write keystore.properties + the decoded keystore
-      # from repo secrets so the release build signs automatically.
+      # Write keystore.properties + decode the keystore from repo secrets so the
+      # release build signs automatically.
       - name: set up signing
-        working-directory: apps/desktop/src-tauri
+        working-directory: apps/android
         run: |
-          bun scripts/patch-android-signing.ts
-          cd gen/android
           echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
           echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
           base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
           echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
 
       - name: build signed APK
-        working-directory: apps/desktop/src-tauri
+        working-directory: apps/android
+        run: |
+          ARGS="-PversionName=${VERSION#*v} -PversionCode=${{ github.run_number }}"
+          if [ -n "${SITE_URL}" ]; then ARGS="$ARGS -PsiteUrl=${SITE_URL}"; fi
+          gradle assembleRelease --no-daemon $ARGS
         env:
-          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: bun run tauri android build --apk
+          VERSION: ${{ inputs.version || github.ref_name }}
+          SITE_URL: ${{ inputs.siteUrl }}
 
       # Attach the signed APK to the draft release, then publish it as the
       # latest release. Fails loudly if only an -unsigned APK exists (which
@@ -198,14 +188,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
-          APK=$(find apps/desktop/src-tauri/gen/android/app/build/outputs/apk \
+          APK=$(find apps/android/app/build/outputs/apk/release \
             -name "*-release.apk" ! -name "*unsigned*" | head -1)
           if [ -z "$APK" ]; then
-            echo "::error::No signed release APK found — did signing apply?"
-            find apps/desktop/src-tauri/gen/android/app/build/outputs/apk -name "*.apk" || true
+            echo "::error::No signed release APK found — did the ANDROID_KEY_* secrets apply?"
+            find apps/android/app/build/outputs/apk -name "*.apk" || true
             exit 1
           fi
           echo "Signed APK: $APK"
-          cp "$APK" "doughmination-music-$TAG-universal.apk"
-          gh release upload "$TAG" "doughmination-music-$TAG-universal.apk" --clobber
+          cp "$APK" "doughmination-music-$TAG-android.apk"
+          gh release upload "$TAG" "doughmination-music-$TAG-android.apk" --clobber
           gh release edit "$TAG" --draft=false --latest
