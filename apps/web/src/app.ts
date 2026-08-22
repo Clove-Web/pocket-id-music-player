@@ -1047,6 +1047,14 @@ async function renderArtistView(el: HTMLElement, id: string): Promise<void> {
   });
 }
 
+// Shared "go to this artist's page" navigation, used by clickable artist
+// names in song rows, the player bar, and the lyrics overlay.
+function openArtist(id: string): void {
+  if (lyricsState.open) toggleLyrics();
+  state.view = { kind: "artist", id };
+  render();
+}
+
 // Create a brand-new artist page. Shared by the "Artists" browse page and
 // the "link song to artist" flow's "can't find it? create new" fallback —
 // `onCreated` fires either with the newly-created artist, or with the
@@ -1558,12 +1566,16 @@ function songTableHtml(songs: Song[], editablePlaylistId?: string): string {
         ? `<span class="tag-e" title="Explicit">E</span>`
         : "";
 
+      const artist = s.artistId
+        ? `<button class="song-artist artist-link" data-open-artist="${s.artistId}">${escapeHtml(s.artist)}</button>`
+        : `<span class="song-artist">${escapeHtml(s.artist)}</span>`;
+
       return `
         <div class="song" data-index="${i}" data-song-id="${s.id}">
           ${cover}
           <div class="song-meta">
             <span class="song-title">${escapeHtml(s.title)}${badge}</span>
-            <span class="song-artist">${escapeHtml(s.artist)}</span>
+            ${artist}
           </div>
           <span class="song-dur">${s.durationS ? formatTime(s.durationS) : ""}</span>
           <div class="song-actions">${action}${linkArtist}${edit}${del}</div>
@@ -1586,8 +1598,15 @@ function wireSongList(editablePlaylistId?: string): void {
   // Double-clicking the row also plays, Spotify-style.
   document.querySelectorAll(".song").forEach((row) => {
     row.addEventListener("dblclick", (e) => {
-      if ((e.target as HTMLElement).closest(".song-actions")) return;
+      if ((e.target as HTMLElement).closest(".song-actions, .song-artist")) return;
       playFromList(Number((row as HTMLElement).dataset.index));
+    });
+  });
+
+  document.querySelectorAll("[data-open-artist]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openArtist((btn as HTMLElement).dataset.openArtist!);
     });
   });
 
@@ -1762,7 +1781,11 @@ function mountPlayerBar(el: HTMLElement, song: Song): void {
       </div>
       <div class="song-meta">
         <span class="song-title">${escapeHtml(song.title)}</span>
-        <span class="song-artist">${escapeHtml(song.artist)}</span>
+        ${
+          song.artistId
+            ? `<button class="song-artist artist-link" id="pb-artist">${escapeHtml(song.artist)}</button>`
+            : `<span class="song-artist">${escapeHtml(song.artist)}</span>`
+        }
       </div>
     </div>
 
@@ -1828,6 +1851,9 @@ function mountPlayerBar(el: HTMLElement, song: Song): void {
   });
 
   el.querySelector("#lyrics-btn")?.addEventListener("click", toggleLyrics);
+  if (song.artistId) {
+    el.querySelector("#pb-artist")?.addEventListener("click", () => openArtist(song.artistId!));
+  }
 }
 
 // Update only the changing pieces — never rebuild (keeps sliders draggable).
@@ -1945,13 +1971,20 @@ function renderLyricsOverlay(): void {
     <div class="ly-head">
       <div class="ly-song">
         <span class="ly-title">${song ? escapeHtml(song.title) : "—"}</span>
-        <span class="ly-artist">${song ? escapeHtml(song.artist) : ""}</span>
+        ${
+          song?.artistId
+            ? `<button class="ly-artist artist-link" id="ly-artist-btn">${escapeHtml(song.artist)}</button>`
+            : `<span class="ly-artist">${song ? escapeHtml(song.artist) : ""}</span>`
+        }
       </div>
       <button class="icon-btn" id="ly-close" title="Close"><i class="bi bi-x-lg"></i></button>
     </div>
     <div class="ly-body" id="ly-body"><p class="ly-note">Finding lyrics…</p></div>
   `;
   ov.querySelector("#ly-close")?.addEventListener("click", toggleLyrics);
+  if (song?.artistId) {
+    ov.querySelector("#ly-artist-btn")?.addEventListener("click", () => openArtist(song.artistId!));
+  }
 }
 
 async function loadLyricsForCurrent(): Promise<void> {

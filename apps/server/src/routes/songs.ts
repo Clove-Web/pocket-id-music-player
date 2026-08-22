@@ -36,8 +36,14 @@ export const songRoutes = new Hono<AppEnv>();
 // Everyone authenticated sees the whole shared library.
 songRoutes.get("/", requireAuth, async (c) => {
   const q = c.req.query("q")?.trim();
-  const rows = await sql<Song[]>`SELECT * FROM songs ORDER BY created_at DESC`;
-  if (!q) return c.json(rows.map(toPublicSong));
+  const rows = await sql<Array<Song & { resolved_artist_id: string | null }>>`
+    SELECT s.*,
+      (SELECT sa.artist_id FROM song_artists sa WHERE sa.song_id = s.id
+       ORDER BY (sa.role = 'primary') DESC, sa.role LIMIT 1) AS resolved_artist_id
+    FROM songs s
+    ORDER BY s.created_at DESC
+  `;
+  if (!q) return c.json(rows.map((s) => toPublicSong(s, s.resolved_artist_id)));
 
   // Personal-scale library: score every song in-process rather than a DB-side
   // fuzzy prefilter (same tradeoff as artists.ts / lib/duplicates.ts). Tight
@@ -62,13 +68,13 @@ songRoutes.get("/", requireAuth, async (c) => {
     .filter((r) => r.score >= 0.35)
     .sort((a, b) => b.score - a.score);
 
-  return c.json(scored.map((r) => toPublicSong(r.song)));
+  return c.json(scored.map((r) => toPublicSong(r.song, r.song.resolved_artist_id)));
 });
 
 songRoutes.get("/:id", requireAuth, async (c) => {
   const song = await getSong(c.req.param("id")!);
   if (!song) return c.json({ error: "not_found" }, 404);
-  return c.json(toPublicSong(song));
+  return c.json(toPublicSong(song, await getPrimaryArtistId(song.id)));
 });
 
 // Upload. title + artist required; cover + rest optional; tags auto-read.
@@ -347,7 +353,7 @@ songRoutes.patch("/:id", requireAuth, async (c) => {
   // Metadata may have changed -> drop stored lyrics so they refetch for the
   // corrected title/artist on next request.
   await sql`DELETE FROM song_lyrics WHERE song_id = ${song.id}`.catch(() => {});
-  return c.json(toPublicSong(rows[0]!));
+  return c.json(toPublicSong(rows[0]!, await getPrimaryArtistId(song.id)));
 });
 
 // Only the uploader may delete.
@@ -377,16 +383,28 @@ async function getSong(id: string): Promise<Song | undefined> {
   return rows[0];
 }
 
+// A song can be linked to several artists (song_artists is many-to-many);
+// "primary" role wins when present, otherwise whichever link comes first.
+async function getPrimaryArtistId(songId: string): Promise<string | null> {
+  const rows = await sql<Array<{ artist_id: string }>>`
+    SELECT artist_id FROM song_artists WHERE song_id = ${songId}
+    ORDER BY (role = 'primary') DESC, role
+    LIMIT 1
+  `;
+  return rows[0]?.artist_id ?? null;
+}
+
 function str(v: FormDataEntryValue | null): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
 // Shape sent to the client (never expose absolute filesystem paths).
-function toPublicSong(s: Song) {
+function toPublicSong(s: Song, artistId: string | null = null) {
   return {
     id: s.id,
     title: s.title,
     artist: s.artist,
+    artistId,
     album: s.album,
     durationS: s.duration_s,
     explicit: s.explicit,

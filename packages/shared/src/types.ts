@@ -6,6 +6,7 @@ export type Song = {
   id: string;
   title: string;
   artist: string;
+  artistId: string | null;
   album: string | null;
   durationS: number | null;
   explicit: boolean;

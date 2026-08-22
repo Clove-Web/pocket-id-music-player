@@ -180,6 +180,7 @@ artistRoutes.get("/:id", async (c) => {
       id: s.id,
       title: s.title,
       artist: s.artist,
+      artistId: id,
       album: s.album,
       durationS: s.duration_s,
       explicit: s.explicit,

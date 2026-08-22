@@ -131,8 +131,12 @@ playlistRoutes.get("/:id", async (c) => {
     return c.json({ error: "not_found" }, 404);
   }
 
-  const songs = await sql<Array<Song & { position: number }>>`
-    SELECT s.*, ps.position
+  const songs = await sql<
+    Array<Song & { position: number; resolved_artist_id: string | null }>
+  >`
+    SELECT s.*, ps.position,
+      (SELECT sa.artist_id FROM song_artists sa WHERE sa.song_id = s.id
+       ORDER BY (sa.role = 'primary') DESC, sa.role LIMIT 1) AS resolved_artist_id
     FROM playlist_songs ps
     JOIN songs s ON s.id = ps.song_id
     WHERE ps.playlist_id = ${pl.id}
@@ -151,6 +155,7 @@ playlistRoutes.get("/:id", async (c) => {
       id: s.id,
       title: s.title,
       artist: s.artist,
+      artistId: s.resolved_artist_id,
       album: s.album,
       durationS: s.duration_s,
       explicit: s.explicit,
