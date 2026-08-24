@@ -268,7 +268,7 @@ jobs:
           java-version: "17"
 
       # Provides sdkmanager and accepts the SDK licenses.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       # Make sure the exact platform + build-tools the module targets are present.
       - name: install SDK packages
