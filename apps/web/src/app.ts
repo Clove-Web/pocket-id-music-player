@@ -268,7 +268,6 @@ async function boot(): Promise<void> {
   restoreNowPlaying();
   handleLastfmRedirect();
   render();
-  startVisualizer();
 }
 
 // Back/forward: the URL is already correct, so just re-derive the view from
@@ -1840,7 +1839,6 @@ function mountPlayerBar(el: HTMLElement, song: Song): void {
             ? `<img class="cover" src="${song.coverUrl}" alt="" />`
             : `<div class="cover cover-empty"><i class="bi bi-music-note-beamed"></i></div>`
         }
-        <canvas class="pb-viz" id="pb-viz"></canvas>
       </div>
       <div class="song-meta">
         <span class="song-title">${escapeHtml(song.title)}</span>
@@ -1953,40 +1951,6 @@ function updatePlayerBar(): void {
   el.querySelector("#lyrics-btn")?.classList.toggle("on", lyricsState.open);
 
   updateVolumeIcon();
-}
-
-// Frequency-bar visualizer painted behind the player bar while a track plays.
-function startVisualizer(): void {
-  const draw = () => {
-    const canvas = document.getElementById("pb-viz") as HTMLCanvasElement | null;
-    const analyser = player.getAnalyser();
-    if (canvas && analyser) {
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        const w = (canvas.width = canvas.clientWidth);
-        const h = (canvas.height = canvas.clientHeight);
-        ctx.clearRect(0, 0, w, h);
-        if (player.playing) {
-          const bins = analyser.frequencyBinCount;
-          const data = new Uint8Array(bins);
-          analyser.getByteFrequencyData(data);
-          // Dim the art a touch so the bars read on top of it.
-          ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
-          ctx.fillRect(0, 0, w, h);
-          const n = 14;
-          const bw = w / n;
-          ctx.fillStyle = "rgba(120, 200, 140, 0.95)"; // green equalizer
-          for (let i = 0; i < n; i++) {
-            const idx = Math.floor((i / n) * bins);
-            const bh = Math.max(2, (data[idx]! / 255) * h);
-            ctx.fillRect(i * bw + bw * 0.18, h - bh, bw * 0.64, bh);
-          }
-        }
-      }
-    }
-    requestAnimationFrame(draw);
-  };
-  requestAnimationFrame(draw);
 }
 
 function updateVolumeIcon(): void {

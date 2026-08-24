@@ -1,12 +1,12 @@
 // Controller around a single <audio> element, with shuffle, repeat, volume.
 // Works unchanged in a browser tab or a Tauri desktop webview — both give
-// us a real HTMLAudioElement/AudioContext/localStorage, so there's no
+// us a real HTMLAudioElement/localStorage, so there's no
 // platform abstraction here beyond the injectable prefs storage.
 
 import type { Song } from "@musicapp/shared";
 
 import { Emitter } from "./events.ts";
-import { createAudioElement, hasNativeHost, type MediaEl } from "./native-audio.ts";
+import { createAudioElement, type MediaEl } from "./native-audio.ts";
 import { localStoragePrefs, type Prefs, type PrefsStorage } from "./storage.ts";
 
 export type RepeatMode = Prefs["repeat"];
@@ -36,8 +36,6 @@ export class Player {
   private readonly maxRecoverAttempts = 4;
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
   private prefs: Prefs;
-  private ctx: AudioContext | null = null;
-  private analyser: AnalyserNode | null = null;
   // iOS ignores HTMLMediaElement.volume (hardware-controlled). Detect so the
   // UI can hide the volume slider there.
   readonly volumeSupported = !isIOS();
@@ -316,11 +314,6 @@ export class Player {
     }
   }
 
-  // Web Audio analyser for the visualizer. Exposed for the canvas draw loop.
-  getAnalyser(): AnalyserNode | null {
-    return this.analyser;
-  }
-
   // Snapshot of the current session, for resume-after-reload.
   snapshot(): { ids: string[]; index: number; position: number } | null {
     if (!this.current) return null;
@@ -355,46 +348,12 @@ export class Player {
     this.events.emit("change");
   }
 
-  // Build the Web Audio graph once (source -> analyser -> speakers). Wrapped so
-  // any failure leaves plain <audio> playback untouched.
-  private setupGraph(): void {
-    if (this.ctx) return;
-    // Native (Android) audio can't be tapped by Web Audio; skip entirely so we
-    // don't construct a throwaway AudioContext on every track (which would leak
-    // contexts and eventually hit the browser's hard limit).
-    if (hasNativeHost()) return;
-    try {
-      const Ctx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext })
-          .webkitAudioContext;
-      const ctx = new Ctx();
-      // Only a real HTMLMediaElement can feed Web Audio. With the native
-      // backend this throws and we fall through to the catch — the visualizer
-      // is simply disabled on Android (native owns the audio pipeline).
-      const src = ctx.createMediaElementSource(this.audio as unknown as HTMLMediaElement);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 128;
-      analyser.smoothingTimeConstant = 0.8;
-      src.connect(analyser);
-      analyser.connect(ctx.destination);
-      this.ctx = ctx;
-      this.analyser = analyser;
-    } catch {
-      this.ctx = null;
-      this.analyser = null;
-    }
-  }
-
   // Play the current element and surface only *real* failures. `token` ties
   // this attempt to the load() that started it: if a newer track has since
   // loaded, the play() promise rejects with AbortError and we ignore it (it
   // was superseded on purpose). A genuine "element wasn't ready yet" abort is
   // retried once on `canplay`; autoplay-policy blocks get a friendlier note.
   private tryPlay(token = this.playToken, retried = false): void {
-    this.setupGraph();
-    void this.ctx?.resume();
-
     const p = this.audio.play();
     if (!p || typeof p.catch !== "function") return;
 

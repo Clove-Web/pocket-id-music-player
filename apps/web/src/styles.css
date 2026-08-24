@@ -461,21 +461,12 @@ button {
   margin: auto;
 }
 
-/* Visualizer overlaid on the now-playing album cover */
+/* Now-playing album cover in the player bar */
 .pb-cover {
   position: relative;
   width: 44px;
   height: 44px;
   flex-shrink: 0;
-}
-
-.pb-viz {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border-radius: 6px;
-  pointer-events: none;
 }
 
 .pb-song {

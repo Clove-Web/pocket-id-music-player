@@ -14,11 +14,11 @@
     "migrate": "bun run --filter @musicapp/server migrate",
     "typecheck": "bun run --filter '*' typecheck",
     "tauri": "tauri",
-    "desktop:dev": "cd apps/desktop/src-tauri && cargo tauri dev",
-    "desktop:build": "cd apps/desktop/src-tauri && cargo tauri build",
-    "android:init": "cd apps/desktop/src-tauri && cargo tauri android init",
-    "android:dev": "cd apps/desktop/src-tauri && cargo tauri android dev",
-    "android:build": "cd apps/desktop/src-tauri && cargo tauri android build --apk"
+    "desktop:dev": "cd apps/desktop/src-tauri && bunx tauri dev",
+    "desktop:build": "cd apps/desktop/src-tauri && bunx tauri build",
+    "android:init": "cd apps/desktop/src-tauri && bunx tauri android init",
+    "android:dev": "cd apps/desktop/src-tauri && bunx tauri android dev",
+    "android:build": "cd apps/desktop/src-tauri && bunx tauri android build --apk"
   },
   "dependencies": {
     "@dotenvx/dotenvx": "^2.19.1"
