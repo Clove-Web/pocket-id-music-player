@@ -26,6 +26,7 @@ arch=('x86_64')
 url="https://github.com/Clove-Web/pocket-id-music-player"
 license=('LicenseRef-DASL-1.0')
 depends=(
+  # Linked by the app binary itself.
   'webkit2gtk-4.1'
   'gtk3'
   'libsoup3'
@@ -35,6 +36,14 @@ depends=(
   'dbus'
   'gcc-libs'
   'glibc'
+  # Linked by libdiscord_partner_sdk.so — all DT_NEEDED entries, so the app
+  # fails to start outright if any are missing, not just Rich Presence.
+  'alsa-lib'
+  'libpulse'
+  'libx11'
+  'libatomic'
+  # Owns the /usr/share/icons/hicolor hierarchy this package drops icons into.
+  'hicolor-icon-theme'
   # Sign-in hands the OIDC flow to the system browser via tauri-plugin-opener,
   # which shells out to xdg-open.
   'xdg-utils'

@@ -398,17 +398,44 @@ jobs:
 
           PKGNAME=$(bash -c "source $WORK/PKGBUILD >/dev/null 2>&1; echo \$pkgname")
 
-          install -dm700 ~/.ssh
-          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan -t ed25519,rsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes"
+          # Absolute paths, deliberately NOT ~/.ssh: this is a container job,
+          # where Actions sets HOME=/github/home but OpenSSH resolves `~`
+          # through getpwuid() to /root. The two disagree, so ssh-keyscan
+          # wrote a known_hosts ssh never read and `-i ~/.ssh/aur` named a
+          # file that did not exist — which surfaced, confusingly, as "Host
+          # key verification failed" on the clone below.
+          SSH_DIR=/tmp/aur-ssh
+          install -dm700 "$SSH_DIR"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$SSH_DIR/id"
+          chmod 600 "$SSH_DIR/id"
+
+          # Pin the host key instead of trusting whatever keyscan happens to
+          # meet; this is the fingerprint the AUR publishes.
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$SSH_DIR/known_hosts"
+          _fp=$(ssh-keygen -lf "$SSH_DIR/known_hosts" | awk 'NR==1{print $2}')
+          _expected='SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4'
+          if [ "$_fp" != "$_expected" ]; then
+            echo "::error::Unexpected host key for aur.archlinux.org: $_fp"
+            exit 1
+          fi
+
+          _ssh="ssh -i $SSH_DIR/id -o IdentitiesOnly=yes -o UserKnownHostsFile=$SSH_DIR/known_hosts"
+          export GIT_SSH_COMMAND="$_ssh"
           git config --global user.name "Doughmination Release Bot"
           git config --global user.email "clovetwilight3@outlook.com"
 
-          # An AUR package is created by its first push — there is nothing to
-          # register beforehand — so an empty/failed clone is the expected
-          # path the very first time and must not abort the job.
+          # Prove the key authenticates BEFORE reading anything into a clone
+          # failure. Without this, a bad secret or unreachable host looks
+          # exactly like "package doesn't exist yet" and gets quietly
+          # promoted into a first-import attempt that then fails on push.
+          if ! $_ssh aur@aur.archlinux.org help >/dev/null 2>&1; then
+            echo "::error::Cannot authenticate to the AUR. Is AUR_SSH_PRIVATE_KEY the private half of the key registered on the AUR account?"
+            exit 1
+          fi
+
+          # With auth proven, a failed clone means only that the package does
+          # not exist yet — an AUR package is created by its first push, so
+          # there is nothing to register beforehand.
           if ! git clone "ssh://aur@aur.archlinux.org/$PKGNAME.git" /tmp/aurrepo; then
             echo "::notice::No AUR repo yet for $PKGNAME — creating it with this push"
             git init -b master /tmp/aurrepo
