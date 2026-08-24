@@ -26,6 +26,10 @@ on:
         description: "Override the site the Android WebView loads (optional)"
         required: false
         type: string
+      codename:
+        description: 'Optional release codename, e.g. Aurora (title only)'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -115,7 +119,13 @@ jobs:
           # Manual runs supply the tag via the `version` input; tag pushes use
           # the pushed tag name. tauri-action creates the tag + draft release.
           tagName: ${{ inputs.version || github.ref_name }}
-          releaseName: "Doughmination Music ${{ inputs.version || github.ref_name }}"
+          # Cosmetic only: `codename` decorates the release title and nothing
+          # else — not the tag, not the artifact names, not the AUR pkgver.
+          # Left off, the title is exactly what it always was.
+          releaseName: >-
+            ${{ inputs.codename
+            && format('Doughmination Music {0} "{1}"', inputs.version || github.ref_name, inputs.codename)
+            || format('Doughmination Music {0}', inputs.version || github.ref_name) }}
           # Kept as a draft here on purpose — the android job publishes it as
           # "latest" once the signed APK is uploaded (see the android job).
           releaseDraft: true
