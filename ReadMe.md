@@ -100,16 +100,30 @@ bun run android:build     # produces an APK
 
 ### Linux runtime requirement
 
-The Linux build (AppImage) does **not** bundle WebKitGTK — you need
-`webkit2gtk-4.1` (Arch/Fedora package name; Debian/Ubuntu: `libwebkit2gtk-4.1-0`)
-installed system-wide for the app to launch. This is deliberate, not an
-oversight: an AppImage-bundled WebKitGTK build has been observed to hard-crash
-at startup (`Could not create default EGL display: EGL_BAD_PARAMETER`) on at
-least one real Wayland compositor + modern Mesa combination that the same
-machine's system-installed WebKitGTK handles fine — GPU/Wayland-coupled
-libraries like this are fragile to bundle across distros, which is exactly why
-every other WebKitGTK-based Linux package (`.deb`/`.rpm`) declares it as a
-runtime dependency instead of shipping its own copy. This app does the same.
+The Linux build (AppImage) does **not** bundle WebKitGTK or the GTK stack
+around it — you need `webkit2gtk-4.1` (Arch/Fedora package name;
+Debian/Ubuntu: `libwebkit2gtk-4.1-0`) installed system-wide for the app to
+launch. Everything else it now takes from your system (GTK 3, GLib, libsoup3,
+GStreamer) is a hard dependency of that one package, so installing it is the
+whole requirement.
+
+This is deliberate, not an oversight: an AppImage-bundled WebKitGTK build has
+been observed to hard-crash at startup (`Could not create default EGL display:
+EGL_BAD_PARAMETER`) on at least one real Wayland compositor + modern Mesa
+combination that the same machine's system-installed WebKitGTK handles fine —
+GPU/Wayland-coupled libraries like this are fragile to bundle across distros,
+which is exactly why every other WebKitGTK-based Linux package (`.deb`/`.rpm`)
+declares it as a runtime dependency instead of shipping its own copy. This app
+does the same.
+
+The unbundling has to be all-or-nothing. WebKitGTK, JavaScriptCore, GStreamer
+and GLib are one version-coupled graph: an earlier build shipped the rest of
+the graph while dropping only `libwebkit2gtk`, which made your system's
+WebKitGTK load against the AppImage's older JavaScriptCore and die instantly
+with `undefined symbol: _ZN3WTF20base64EncodeToString...`. The release
+workflow therefore strips *every* bundled library except the app's own Discord
+SDK — see the "unbundle the GTK/WebKitGTK stack" step in
+`.github/workflows/release.yml`.
 
 ```bash
 # Arch / Manjaro
@@ -121,6 +135,25 @@ sudo apt install libwebkit2gtk-4.1-0
 # Fedora
 sudo dnf install webkit2gtk4.1
 ```
+
+### Arch: install from the AUR
+
+Arch users can skip the AppImage entirely — `doughmination-music`
+repackages it as a normal system package (`/usr/bin/doughmination-music`, a
+desktop entry, and hicolor icons), so `webkit2gtk-4.1` and the rest arrive as
+pacman dependencies:
+
+```bash
+paru -S doughmination-music   # or: yay -S doughmination-music
+```
+
+The PKGBUILD lives at [`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD) and is
+the source of truth — the release workflow's `aur` job rewrites its `pkgver`,
+fills the checksums, test-builds it and pushes it to the AUR after each
+release, so edits made directly in the AUR repo get overwritten. Publishing
+requires an `AUR_SSH_PRIVATE_KEY` repository secret (the private half of an SSH
+key registered on the maintainer's AUR account); without it the job logs a
+notice and skips, and the rest of the release proceeds normally.
 
 ## Deployment
 

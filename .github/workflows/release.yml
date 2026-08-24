@@ -124,24 +124,57 @@ jobs:
           # failure shows the real error instead of just "failed to run …".
           args: ${{ matrix.args }} --verbose
 
-      # linuxdeploy bundles WebKitGTK (from this Ubuntu 22.04 image) straight
-      # into the AppImage. That bundled build has been confirmed to hard-crash
-      # at startup — "Could not create default EGL display: EGL_BAD_PARAMETER"
-      # before it ever touches a GPU — on at least one real Wayland compositor
-      # + modern Mesa combination where the SAME machine's system-installed
-      # WebKitGTK works fine. GPU/Wayland-coupled libraries like this are
-      # fragile to bundle across distros — it's exactly why every other
-      # WebKitGTK-based Linux package (.deb/.rpm) declares it as a runtime
-      # dependency instead of shipping its own copy. So: strip it out of the
-      # AppImage here and force it onto the host's own webkit2gtk-4.1 (users
-      # need that installed — see ReadMe.md's Linux runtime requirement).
+      # Force the AppImage onto the host's GTK/WebKitGTK stack.
+      #
+      # Rationale (why we don't bundle WebKitGTK): a bundled WebKitGTK build
+      # has been confirmed to hard-crash at startup — "Could not create
+      # default EGL display: EGL_BAD_PARAMETER", before it ever touches a GPU
+      # — on at least one real Wayland compositor + modern Mesa combination
+      # where the SAME machine's system-installed WebKitGTK works fine.
+      # GPU/Wayland-coupled libraries are fragile to bundle across distros,
+      # which is exactly why every other WebKitGTK-based Linux package
+      # (.deb/.rpm) declares it as a runtime dependency instead of shipping
+      # its own copy. This app does the same — see ReadMe.md's "Linux runtime
+      # requirement".
+      #
+      # Why we strip the WHOLE stack and not just libwebkit2gtk: these
+      # libraries are one tightly version-coupled graph, so removing part of
+      # it and keeping the rest is *worse* than either extreme — the host
+      # loads its own copy of what we deleted, which then fails to resolve
+      # symbols against the Ubuntu 22.04 copies we kept. Deleting only
+      # libwebkit2gtk-4.1.so.0 (what this step used to do) shipped an
+      # AppImage that died instantly on Arch with:
+      #   symbol lookup error: /usr/lib/libwebkit2gtk-4.1.so.0:
+      #     undefined symbol: _ZN3WTF20base64EncodeToString...
+      # because host libwebkit2gtk was paired with the bundled (older)
+      # libjavascriptcoregtk. Clearing that one exposed the next link in the
+      # same chain, and so on: javascriptcoregtk -> gstreamer
+      # (gst_debug_log_id) -> glib (g_once_init_leave_pointer) -> libmount
+      # (MOUNT_2_40) -> ... It bottoms out only when the host provides the
+      # entire graph, so that's what we do: drop every bundled library except
+      # the app's own private one (the Discord SDK, which no distro ships).
+      #
+      # The linuxdeploy GTK hook is rewritten to match. Its stock version
+      # points GTK_PATH / GDK_PIXBUF_MODULE_FILE / GIO_EXTRA_MODULES /
+      # GTK_IM_MODULE_FILE / GSETTINGS_SCHEMA_DIR at module caches inside the
+      # AppDir that no longer exist — and that host GTK must not load anyway.
+      # GDK_BACKEND=x11 is kept from the stock hook (native Wayland crashes:
+      # tauri-apps/tauri#8541).
+      #
+      # Everything the host must now provide (gtk3, glib, libsoup3,
+      # gstreamer) is a hard dependency of webkit2gtk-4.1, so requiring that
+      # one package is still the whole ask.
+      #
       # Re-uploads over what tauri-action just attached to the draft release.
-      - name: strip bundled WebKitGTK from the AppImage
+      - name: unbundle the GTK/WebKitGTK stack from the AppImage
         if: matrix.platform == 'ubuntu-22.04'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
+          # (no `pipefail`: `find | head -1` below can hand find an EPIPE.)
+          set -eu
+
           APPIMAGE=$(find apps/desktop/src-tauri/target -maxdepth 5 -name "*.AppImage" | head -1)
           if [ -z "$APPIMAGE" ]; then
             echo "::error::No .AppImage found to patch"
@@ -154,8 +187,51 @@ jobs:
           chmod +x "$NAME"
           ./"$NAME" --appimage-extract >/dev/null
 
-          rm -f squashfs-root/usr/lib/libwebkit2gtk-4.1.so.0
-          rm -rf squashfs-root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1
+          # Private, non-distro libraries that must survive the purge.
+          KEEP='libdiscord_partner_sdk.so'
+
+          echo "Bundled libraries before: $(find squashfs-root/usr/lib -type f -name '*.so*' | wc -l)"
+          find squashfs-root/usr/lib -mindepth 1 -maxdepth 1 \
+            ! -name "$KEEP" -exec rm -rf {} +
+          echo "Bundled libraries after:  $(find squashfs-root/usr/lib -type f -name '*.so*' | wc -l)"
+
+          # linuxdeploy also drags in the Ubuntu packages' /usr/share/doc and a
+          # copy of their GLib schemas. The docs are dead weight, and the
+          # schemas would shadow the host's (XDG_DATA_DIRS puts the AppDir
+          # first) with a 22.04-era set. Neither belongs here now.
+          rm -rf squashfs-root/usr/share/doc squashfs-root/usr/share/glib-2.0
+
+          # Fail loudly rather than shipping an AppImage missing its own lib.
+          if [ ! -f "squashfs-root/usr/lib/$KEEP" ]; then
+            echo "::error::$KEEP was removed — the app will not start"
+            exit 1
+          fi
+
+          # Two fixes to Tauri's generated .desktop entry, which the AUR
+          # package (packaging/aur/PKGBUILD) also installs verbatim:
+          #   - Exec had no %u, so the doughmination:// sign-in callback was
+          #     never passed to the app despite the MimeType line claiming
+          #     the scheme.
+          #   - Categories was emitted empty, which is invalid and leaves the
+          #     app uncategorised in menus.
+          for d in squashfs-root/*.desktop \
+                   squashfs-root/usr/share/applications/*.desktop; do
+            [ -f "$d" ] || continue
+            grep -q '%u' "$d" || sed -i 's|^\(Exec=.*\)$|\1 %u|' "$d"
+            sed -i 's|^Categories=$|Categories=AudioVideo;Audio;Player;|' "$d"
+          done
+
+          cat > squashfs-root/apprun-hooks/linuxdeploy-plugin-gtk.sh <<'HOOK'
+          #! /usr/bin/env bash
+          # Rewritten by .github/workflows/release.yml — see the comment on the
+          # "unbundle the GTK/WebKitGTK stack" step. GTK, GLib, GdkPixbuf, GIO
+          # and WebKitGTK all come from the host, so none of the stock hook's
+          # AppDir module/schema paths apply; setting them would make host GTK
+          # load Ubuntu 22.04 modules.
+          export APPDIR="${APPDIR:-"$(dirname "$(realpath "$0")")"}"
+          export GDK_BACKEND=x11 # native Wayland crashes: tauri-apps/tauri#8541
+          export XDG_DATA_DIRS="$APPDIR/usr/share:/usr/share:$XDG_DATA_DIRS"
+          HOOK
 
           curl -sSL -o appimagetool \
             https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
@@ -241,3 +317,110 @@ jobs:
           cp "$APK" "doughmination-music-$TAG-android.apk"
           gh release upload "$TAG" "doughmination-music-$TAG-android.apk" --clobber
           gh release edit "$TAG" --draft=false --latest
+
+  aur:
+    # Publishes the Arch package (doughmination-music) to the AUR from
+    # packaging/aur/PKGBUILD.
+    #
+    # Runs after `android`, not after `build`, because `android` is the job
+    # that flips the release from draft to published — and the PKGBUILD's
+    # source= URL points at the release's public download endpoint, which
+    # returns 404 for a draft. Nothing else here depends on Android.
+    #
+    # Skips itself (rather than failing) when AUR_SSH_PRIVATE_KEY isn't
+    # configured, so forks and key-less runs still get a normal release.
+    needs: android
+    runs-on: ubuntu-latest
+    # base-devel gives us makepkg + fakeroot; the alternative is reimplementing
+    # .SRCINFO generation by hand on Ubuntu, which is exactly the sort of thing
+    # that silently drifts from what the AUR expects.
+    container: archlinux:base-devel
+
+    steps:
+      # Before checkout: actions/checkout falls back to a slow, shallow REST
+      # download when git is missing from the container.
+      - name: install tooling
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git openssh pacman-contrib namcap github-cli
+
+      - uses: actions/checkout@v7
+
+      - name: build and push the AUR package
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.version || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+
+          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
+            echo "::notice::AUR_SSH_PRIVATE_KEY is not set — skipping AUR publish"
+            exit 0
+          fi
+
+          PKGVER="${TAG#v}"
+
+          # tauri.conf.json's `version` — not the git tag — is what ends up in
+          # the artifact filename, so ask the release what it's actually
+          # called instead of reconstructing it and 404ing on a mismatch.
+          APPIMAGE_NAME=$(gh release view "$TAG" --repo "$REPO" \
+            --json assets --jq '.assets[].name | select(endswith(".AppImage"))' \
+            | head -1)
+          if [ -z "$APPIMAGE_NAME" ]; then
+            echo "::error::No .AppImage asset on release $TAG"
+            exit 1
+          fi
+          echo "Packaging $APPIMAGE_NAME as $PKGVER"
+
+          # makepkg refuses to run as root, and this container is root.
+          useradd -m builder
+          WORK=/tmp/aurbuild
+          install -d -o builder -g builder "$WORK"
+
+          cp packaging/aur/PKGBUILD "$WORK/PKGBUILD"
+          sed -i \
+            -e "s|^pkgver=.*|pkgver=$PKGVER|" \
+            -e "s|^pkgrel=.*|pkgrel=1|" \
+            -e "s|^_appimagefile=.*|_appimagefile=\"$APPIMAGE_NAME\"|" \
+            "$WORK/PKGBUILD"
+          chown builder:builder "$WORK/PKGBUILD"
+
+          # updpkgsums replaces the SKIP placeholders with real hashes of what
+          # we just published; the test build is what catches a PKGBUILD that
+          # no longer matches the artifact's layout BEFORE it reaches the AUR.
+          runuser -l builder -c "cd $WORK && updpkgsums"
+          runuser -l builder -c "cd $WORK && makepkg --printsrcinfo > .SRCINFO"
+          runuser -l builder -c "cd $WORK && makepkg --nodeps --noconfirm"
+          runuser -l builder -c "cd $WORK && namcap ./*.pkg.tar.zst" || \
+            echo "::warning::namcap reported issues (advisory only)"
+
+          PKGNAME=$(bash -c "source $WORK/PKGBUILD >/dev/null 2>&1; echo \$pkgname")
+
+          install -dm700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519,rsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes"
+          git config --global user.name "Doughmination Release Bot"
+          git config --global user.email "clovetwilight3@outlook.com"
+
+          # An AUR package is created by its first push — there is nothing to
+          # register beforehand — so an empty/failed clone is the expected
+          # path the very first time and must not abort the job.
+          if ! git clone "ssh://aur@aur.archlinux.org/$PKGNAME.git" /tmp/aurrepo; then
+            echo "::notice::No AUR repo yet for $PKGNAME — creating it with this push"
+            git init -b master /tmp/aurrepo
+            git -C /tmp/aurrepo remote add origin "ssh://aur@aur.archlinux.org/$PKGNAME.git"
+          fi
+
+          cp "$WORK/PKGBUILD" "$WORK/.SRCINFO" /tmp/aurrepo/
+          git -C /tmp/aurrepo add PKGBUILD .SRCINFO
+          if git -C /tmp/aurrepo diff --cached --quiet; then
+            echo "::notice::AUR package already up to date for $PKGVER"
+            exit 0
+          fi
+          git -C /tmp/aurrepo commit -m "Update to $PKGVER"
+          git -C /tmp/aurrepo push origin HEAD:master
+          echo "Published $PKGNAME $PKGVER to the AUR"
