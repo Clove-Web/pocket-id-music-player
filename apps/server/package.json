@@ -13,7 +13,7 @@
   "dependencies": {
     "@musicapp/shared": "workspace:*",
     "hono": "^4.13.3",
-    "ioredis": "^5.11.1",
+    "ioredis": "^6.0.0",
     "jose": "^6.2.9",
     "music-metadata": "^11.15.0",
     "postgres": "^3.4.9"
