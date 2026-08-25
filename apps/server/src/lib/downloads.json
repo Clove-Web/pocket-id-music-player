@@ -1,0 +1,38 @@
+{
+  "repo": "Clove-Web/pocket-id-music-player",
+
+  "latest": "willow",
+
+  "platforms": {
+    "windows": "Doughmination.Music_x64-setup.exe",
+    "mac": "Doughmination.Music_universal.dmg",
+    "linux": "Doughmination.Music_amd64.AppImage",
+    "deb": "Doughmination.Music_amd64.deb",
+    "android": "doughmination-music-android.apk"
+  },
+
+  "aliases": {
+    "win": "windows",
+    "exe": "windows",
+    "macos": "mac",
+    "osx": "mac",
+    "dmg": "mac",
+    "appimage": "linux",
+    "debian": "deb",
+    "ubuntu": "deb",
+    "apk": "android"
+  },
+
+  "versions": {
+    "willow": {
+      "tag": "v2.2.0",
+      "files": {
+        "windows": "Doughmination.Music_1.0.0_x64-setup.exe",
+        "mac": "Doughmination.Music_1.0.0_universal.dmg",
+        "linux": "Doughmination.Music_1.0.0_amd64.AppImage",
+        "deb": "Doughmination.Music_1.0.0_amd64.deb",
+        "android": "doughmination-music-v2.2.0-android.apk"
+      }
+    }
+  }
+}

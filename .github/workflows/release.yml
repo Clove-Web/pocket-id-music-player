@@ -252,6 +252,67 @@ jobs:
           echo "Patched AppImage: $DIR/$NAME"
           gh release upload "$TAG" "$NAME" --clobber
 
+          # appimagetool is itself an .AppImage sitting in the bundle
+          # directory; the rename step below globs that directory by
+          # extension, so both it and the extracted tree have to go.
+          rm -rf squashfs-root appimagetool
+
+      # Republish the desktop artifacts under version-less asset names.
+      #
+      # Tauri names bundles from `productName` plus tauri.conf.json's
+      # `version` — which is still 1.0.0 and is not bumped per release — so
+      # they land as Doughmination.Music_1.0.0_x64-setup.exe: a version that
+      # is both wrong and, if it ever were bumped, unstable. Stable names are
+      # what let the site's /download?platform=windows point at a release
+      # without hardcoding a filename per version (see
+      # apps/server/src/lib/downloads.json).
+      #
+      # tauri-action has already attached the versioned names to the draft
+      # release, so each file is re-uploaded under its stripped name and the
+      # versioned asset then deleted.
+      - name: republish artifacts under version-less names
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          set -eu
+
+          STAGE=$(mktemp -d)
+          found=0
+
+          # /usr/bin/find explicitly: on the Windows runner a bare `find` can
+          # resolve to Windows' FIND.EXE, which takes none of these flags.
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            found=1
+            old=$(basename "$f")
+            # Strips a _1.2.3_ / -1.2.3- segment wherever the bundler put it:
+            #   Doughmination.Music_1.0.0_x64-setup.exe
+            #     -> Doughmination.Music_x64-setup.exe
+            #   Doughmination.Music-1.0.0-1.x86_64.rpm
+            #     -> Doughmination.Music-1.x86_64.rpm
+            new=$(printf '%s' "$old" | sed -E 's/([._-])[0-9]+\.[0-9]+\.[0-9]+[._-]/\1/')
+            if [ "$new" = "$old" ]; then
+              echo "unchanged: $old"
+              continue
+            fi
+            echo "$old -> $new"
+            cp "$f" "$STAGE/$new"
+            gh release upload "$TAG" "$STAGE/$new" --clobber
+            gh release delete-asset "$TAG" "$old" --yes
+          done <<EOF
+          $(/usr/bin/find apps/desktop/src-tauri/target -type f -path '*/bundle/*' \
+              \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' \
+                 -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \
+                 -o -name '*.app.tar.gz' \))
+          EOF
+
+          if [ "$found" = 0 ]; then
+            echo "::error::No bundled artifacts found to rename"
+            exit 1
+          fi
+
   android:
     # Builds and publishes the SIGNED native Android APK (apps/android): a
     # WebView shell around the site plus a native Media3 playback service
@@ -324,8 +385,10 @@ jobs:
             exit 1
           fi
           echo "Signed APK: $APK"
-          cp "$APK" "doughmination-music-$TAG-android.apk"
-          gh release upload "$TAG" "doughmination-music-$TAG-android.apk" --clobber
+          # Version-less, like the desktop artifacts — see the "republish
+          # artifacts under version-less names" step in the build job.
+          cp "$APK" "doughmination-music-android.apk"
+          gh release upload "$TAG" "doughmination-music-android.apk" --clobber
           gh release edit "$TAG" --draft=false --latest
 
   aur:

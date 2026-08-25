@@ -11,6 +11,11 @@ import {
   isAdmin,
   type AppEnv,
 } from "./auth/middleware.ts";
+import {
+  resolveDownload,
+  versionNames,
+  platformNames,
+} from "./lib/downloads.ts";
 import { ensureMediaDirs } from "./lib/media.ts";
 import { startPocketIdGuard } from "./lib/pocketid-guard.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -97,11 +102,34 @@ app.get("/app.js", () => serveFile(join(webDist, "app.js"), "no-cache"));
 app.get("/styles.css", () => serveFile(join(webSrc, "styles.css"), "no-cache"));
 app.get("/favicon.png", () => serveFile(join(serverPublic, "favicon.png")));
 
-// Vanity redirect to the source repo. Must sit before the SPA catch-all
-// below, or the `*` route would swallow it and serve index.html instead.
-app.get("/download", (c) =>
-  c.redirect("https://github.com/doughmination/pocket-id-music-player/", 302),
-);
+// Vanity download redirect. Must sit before the SPA catch-all below, or
+// the `*` route would swallow it and serve index.html instead.
+//
+//   /download                          -> the repo page
+//   /download?version=willow           -> that release's page
+//   /download?platform=windows         -> latest release's installer
+//   /download?version=willow&platform=windows -> that release's installer
+//
+// The codename -> tag and platform -> filename tables live in
+// lib/downloads.json; see lib/downloads.ts.
+app.get("/download", (c) => {
+  const target = resolveDownload(c.req.query("version"), c.req.query("platform"));
+
+  switch (target.kind) {
+    case "unknown-version":
+      return c.text(
+        `Unknown version "${target.value}". Available: ${versionNames.join(", ")}`,
+        404,
+      );
+    case "unknown-platform":
+      return c.text(
+        `Unknown platform "${target.value}". Available: ${platformNames.join(", ")}`,
+        404,
+      );
+    default:
+      return c.redirect(target.url, 302);
+  }
+});
 
 // SPA fallback: any non-API route returns index.html. Also no-cache, so a
 // stale shell can't keep pointing the webview at an old asset.
