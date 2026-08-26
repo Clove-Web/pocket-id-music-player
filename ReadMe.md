@@ -147,6 +147,9 @@ pacman dependencies:
 paru -S doughmination-music   # or: yay -S doughmination-music
 ```
 
+> [!NOTE]
+> There are some issues with attaching to the Wayland display, if this happens, run the app with `WEBKIT_DISABLE_DMABUF_RENDERER=1` as this is a found fix
+
 The PKGBUILD lives at [`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD) and is
 the source of truth — the release workflow's `aur` job rewrites its `pkgver`,
 fills the checksums, test-builds it and pushes it to the AUR after each
