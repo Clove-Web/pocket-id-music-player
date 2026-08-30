@@ -1,10 +1,21 @@
 FROM oven/bun:1 AS base
 WORKDIR /app
 
-# ffmpeg powers the background Opus transcode (lib/media.ts). Without it the
-# app still runs — transcoding just no-ops and /stream serves the master.
+# ffmpeg powers the background Opus transcode (lib/media.ts) and yt-dlp's
+# audio extraction. yt-dlp backs "Import from YouTube" on the upload screen
+# (config.youtube / routes/songs.ts POST /import). Both are optional at
+# runtime: without ffmpeg the transcode no-ops; without yt-dlp the import
+# endpoint returns 503 and file upload is unaffected.
+#
+# yt-dlp_linux is the self-contained PyInstaller build (no system Python).
+# It's fetched from the `latest` release on purpose — yt-dlp needs frequent
+# updates to keep working against YouTube, so a rebuild picks up the newest.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg \
+  && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+  && curl -fsSL -o /usr/local/bin/yt-dlp \
+       https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+  && chmod a+rx /usr/local/bin/yt-dlp \
+  && /usr/local/bin/yt-dlp --version \
   && rm -rf /var/lib/apt/lists/*
 
 COPY . .

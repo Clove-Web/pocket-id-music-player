@@ -812,13 +812,20 @@ function openUploadModal(): void {
         <h2>Upload</h2>
         <button class="icon-btn" id="modal-close" title="Close"><i class="bi bi-x-lg"></i></button>
       </div>
-      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add audio files">
-        <i class="bi bi-cloud-arrow-up dz-icon"></i>
-        <span class="dz-text">Drag audio files here, or <span class="dz-link">browse</span></span>
-        <span class="dz-hint">One song lets you edit details; multiple upload in bulk.</span>
-        <input type="file" accept="audio/*" multiple hidden />
+      <div class="seg" role="tablist">
+        <button class="seg-btn active" id="tab-files" role="tab" aria-selected="true" type="button">Files</button>
+        <button class="seg-btn" id="tab-yt" role="tab" aria-selected="false" type="button">YouTube link</button>
       </div>
-      <div id="upload-body"></div>
+      <div id="files-mode">
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add audio files">
+          <i class="bi bi-cloud-arrow-up dz-icon"></i>
+          <span class="dz-text">Drag audio files here, or <span class="dz-link">browse</span></span>
+          <span class="dz-hint">One song lets you edit details; multiple upload in bulk.</span>
+          <input type="file" accept="audio/*" multiple hidden />
+        </div>
+        <div id="upload-body"></div>
+      </div>
+      <div id="yt-mode" hidden></div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -869,6 +876,79 @@ function openUploadModal(): void {
     dropzone.classList.remove("drag");
     onFiles((e as DragEvent).dataTransfer?.files);
   });
+
+  // --- Files / YouTube link mode switch ---
+  const filesMode = overlay.querySelector("#files-mode") as HTMLElement;
+  const ytMode = overlay.querySelector("#yt-mode") as HTMLElement;
+  const tabFiles = overlay.querySelector("#tab-files") as HTMLButtonElement;
+  const tabYt = overlay.querySelector("#tab-yt") as HTMLButtonElement;
+  let ytRendered = false;
+  const showMode = (yt: boolean) => {
+    filesMode.hidden = yt;
+    ytMode.hidden = !yt;
+    tabFiles.classList.toggle("active", !yt);
+    tabYt.classList.toggle("active", yt);
+    tabFiles.setAttribute("aria-selected", String(!yt));
+    tabYt.setAttribute("aria-selected", String(yt));
+    if (yt && !ytRendered) {
+      renderYouTube();
+      ytRendered = true;
+    }
+  };
+  tabFiles.addEventListener("click", () => showMode(false));
+  tabYt.addEventListener("click", () => showMode(true));
+
+  // --- YouTube link: server-side yt-dlp import ---
+  function renderYouTube(): void {
+    ytMode.innerHTML = `
+      <form id="yt-form" class="upload-card">
+        <label class="field"><span>YouTube link <em>(required)</em></span>
+          <input name="url" type="url" inputmode="url"
+            placeholder="https://www.youtube.com/watch?v=…" required /></label>
+        <p class="dz-hint">Audio is downloaded on the server with yt-dlp. A playlist
+          link imports only the video it points at, and it can take a minute.</p>
+        <label class="field"><span>Song name <em>(optional — overrides YouTube)</em></span>
+          <input name="title" /></label>
+        <label class="field"><span>Artist <em>(optional — overrides YouTube)</em></span>
+          <input name="artist" /></label>
+        <label class="field"><span>Album <em>(optional)</em></span>
+          <input name="album" /></label>
+        <label class="check-row"><input type="checkbox" name="explicit" value="true" /> <span>Explicit content</span></label>
+        <button class="btn btn-primary" type="submit">Import</button>
+        <span id="yt-status" class="upload-status"></span>
+      </form>
+    `;
+    const form = ytMode.querySelector("#yt-form") as HTMLFormElement;
+    const status = ytMode.querySelector("#yt-status") as HTMLElement;
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const link = String(fd.get("url") ?? "").trim();
+      if (!link) return;
+      const btn = form.querySelector("button")!;
+      btn.textContent = "Importing…";
+      btn.setAttribute("disabled", "true");
+      status.textContent = "Downloading from YouTube — this can take a minute…";
+      try {
+        const song = await api.importSong({
+          url: link,
+          title: String(fd.get("title") ?? "").trim() || undefined,
+          artist: String(fd.get("artist") ?? "").trim() || undefined,
+          album: String(fd.get("album") ?? "").trim() || undefined,
+          explicit: fd.get("explicit") === "true",
+        });
+        await loadSongs();
+        if (state.view.kind === "library") renderMain();
+        close();
+        flash(`Added "${song.title}" by ${song.artist}.`);
+      } catch (err) {
+        status.textContent = `Import failed: ${(err as Error).message}`;
+        btn.textContent = "Import";
+        btn.removeAttribute("disabled");
+      }
+    });
+  }
 
   // --- single file: prefilled, editable form ---
   function renderSingle(file: File): void {

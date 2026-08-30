@@ -14,6 +14,7 @@ account system.
 - Stream your own music library with seek/scrub (HTTP range) and gapless-ish playback
 - Playlists, artists, and shared (public) playlists
 - Upload tracks straight from the web UI, with automatic Opus transcoding for smaller mobile streams
+- Import a track from a YouTube link (server-side `yt-dlp`) — same review flow as an upload
 - Duplicate detection to keep the library tidy
 - Lyrics lookup
 - Last.fm scrobbling
@@ -31,7 +32,7 @@ account system.
 | Desktop     | [Electron](https://www.electronjs.org/) (TypeScript) · Discord Rich Presence over IPC |
 | Android     | Native Kotlin · WebView UI + Media3/ExoPlayer for background playback    |
 | Auth        | Pocket ID (OIDC) — session cookie for web, bearer token for native apps  |
-| Media       | FFmpeg (Opus transcode) · optional nginx `X-Accel-Redirect` offload      |
+| Media       | FFmpeg (Opus transcode) · `yt-dlp` (YouTube import) · optional nginx `X-Accel-Redirect` offload |
 | Tooling     | Bun workspaces monorepo · Docker / Compose                              |
 
 ## Project structure
@@ -49,9 +50,11 @@ apps/
 
 ## Getting started
 
-**Prerequisites:** [Bun](https://bun.sh), PostgreSQL, and Redis. The desktop app
-needs only Bun (Electron installs as a dev dependency); the Android app needs
-JDK 17 and the Android SDK.
+**Prerequisites:** [Bun](https://bun.sh), PostgreSQL, and Redis. `ffmpeg` (Opus
+transcode) and `yt-dlp` (YouTube import) are optional — both features degrade
+gracefully when the binary is missing, and the Docker image bundles both. The
+desktop app needs only Bun (Electron installs as a dev dependency); the Android
+app needs JDK 17 and the Android SDK.
 
 ```bash
 # 1. Install dependencies
@@ -84,6 +87,7 @@ list. The essentials:
 | `MUSIC_ADMINS`          | Comma-separated user IDs granted admin         |
 | `MUSIC_MEDIA_DIR`       | Where uploaded audio is stored                 |
 | `MUSIC_LASTFM_API_KEY` / `MUSIC_LASTFM_SHARED_SECRET` | Optional Last.fm scrobbling |
+| `MUSIC_YTDLP_ENABLED` / `MUSIC_YTDLP_BIN` / `MUSIC_YTDLP_TIMEOUT_MS` | YouTube import: on/off, binary name, per-download wall-clock cap |
 
 ## Building the apps
 

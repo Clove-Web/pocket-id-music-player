@@ -2,10 +2,14 @@
 
 import {
   mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
   writeFile,
   rm,
   stat,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import {
   join,
   resolve,
@@ -196,6 +200,174 @@ export async function transcodeToOpus(
     console.error("transcodeToOpus error:", err);
     await rm(outAbs, { force: true }).catch(() => {});
     return null;
+  }
+}
+
+// --- YouTube import ------------------------------------------------------
+
+// Only these hosts are handed to yt-dlp. yt-dlp will happily fetch from any
+// site it has an extractor for (including plain http(s) URLs), so without
+// this allowlist the endpoint is an SSRF primitive.
+const YT_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtu.be",
+  "www.youtu.be",
+]);
+
+export function isSupportedYouTubeUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  return YT_HOSTS.has(u.hostname.toLowerCase());
+}
+
+// Thrown by downloadFromYouTube so the route can map a stable `code` to an
+// HTTP status and a user-facing message.
+export class YouTubeImportError extends Error {
+  code: string;
+  detail: string | undefined;
+  constructor(code: string, detail?: string) {
+    super(detail ? `${code}: ${detail}` : code);
+    this.name = "YouTubeImportError";
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+export type YouTubeImport = {
+  bytes: Uint8Array;
+  ext: string; // includes the leading dot, e.g. ".m4a"
+  durationS: number | null;
+  suggested: { title: string | null; artist: string | null; album: string | null };
+  cover: { data: Uint8Array; ext: string } | null;
+};
+
+// Fetch the audio track of a single YouTube video via yt-dlp and return the
+// bytes + metadata hints, for the caller to run through the normal upload
+// pipeline. Everything happens in a throwaway temp dir that's always removed.
+//
+// Safety: host is allowlisted by the caller AND here; --no-playlist collapses
+// a playlist URL to one video; --max-filesize caps the download; a wall-clock
+// timer kills yt-dlp if it hangs. yt-dlp is spawned argv-style (no shell) with
+// `--` before the URL.
+export async function downloadFromYouTube(rawUrl: string): Promise<YouTubeImport> {
+  if (!config.youtube.enabled) throw new YouTubeImportError("youtube_import_disabled");
+  if (!isSupportedYouTubeUrl(rawUrl)) throw new YouTubeImportError("unsupported_url");
+
+  const workDir = await mkdtemp(join(tmpdir(), "dmnd-yt-"));
+  try {
+    const proc = Bun.spawn(
+      [
+        config.youtube.binary,
+        "--no-playlist",
+        "--no-progress",
+        "--no-cache-dir",
+        "--no-part",
+        "--socket-timeout", "30",
+        "--retries", "3",
+        // Prefer an already-AAC stream so --audio-format m4a only remuxes
+        // (no re-encode); fall back to re-encoding whatever bestaudio is.
+        "-f", "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/bestaudio/best",
+        "--extract-audio",
+        "--audio-format", "m4a",
+        "--audio-quality", "0",
+        "--embed-metadata",
+        "--write-info-json",
+        "--write-thumbnail",
+        "--convert-thumbnails", "jpg",
+        "--max-filesize", String(config.maxUploadBytes),
+        "-o", join(workDir, "audio.%(ext)s"),
+        "--",
+        rawUrl,
+      ],
+      { stdout: "ignore", stderr: "pipe", stdin: "ignore" },
+    );
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill(9);
+    }, config.youtube.timeoutMs);
+    let exit: number;
+    try {
+      exit = await proc.exited;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (timedOut) throw new YouTubeImportError("timed_out");
+
+    if (exit !== 0) {
+      const err = (await new Response(proc.stderr).text()).trim();
+      if (exit === 127 || /not found|no such file|ENOENT/i.test(err)) {
+        throw new YouTubeImportError("ytdlp_unavailable");
+      }
+      if (/max-filesize|larger than max/i.test(err)) {
+        throw new YouTubeImportError("file_too_large");
+      }
+      console.error(`yt-dlp failed (exit ${exit}): ${err}`);
+      throw new YouTubeImportError("download_failed", err.split("\n").pop() || undefined);
+    }
+
+    const entries = await readdir(workDir);
+    const isImg = (n: string) => /\.(jpe?g|png|webp)$/i.test(n);
+    const audioName = entries.find(
+      (n) => n.startsWith("audio.") && !n.endsWith(".info.json") && !isImg(n),
+    );
+    if (!audioName) throw new YouTubeImportError("download_failed", "no audio produced");
+
+    const bytes = new Uint8Array(await readFile(join(workDir, audioName)));
+    if (bytes.byteLength > config.maxUploadBytes) {
+      throw new YouTubeImportError("file_too_large");
+    }
+    const ext = extname(audioName) || ".m4a";
+
+    const suggested: YouTubeImport["suggested"] = {
+      title: null,
+      artist: null,
+      album: null,
+    };
+    let durationS: number | null = null;
+    try {
+      const info = JSON.parse(
+        await readFile(join(workDir, "audio.info.json"), "utf8"),
+      ) as Record<string, unknown>;
+      const s = (v: unknown) =>
+        typeof v === "string" && v.trim() ? v.trim() : null;
+      suggested.title = s(info.track) ?? s(info.title);
+      suggested.artist =
+        s(info.artist) ?? s(info.creator) ?? s(info.uploader) ?? s(info.channel);
+      suggested.album = s(info.album);
+      if (typeof info.duration === "number" && info.duration > 0) {
+        durationS = Math.round(info.duration);
+      }
+    } catch {
+      // no / unreadable info json — leave the hints null
+    }
+
+    let cover: YouTubeImport["cover"] = null;
+    const thumbName = entries.find((n) => n.startsWith("audio.") && isImg(n));
+    if (thumbName) {
+      try {
+        const tb = new Uint8Array(await readFile(join(workDir, thumbName)));
+        if (tb.byteLength > 0) {
+          cover = { data: tb, ext: extname(thumbName).slice(1).toLowerCase() || "jpg" };
+        }
+      } catch {
+        // thumbnail is best-effort
+      }
+    }
+
+    return { bytes, ext, durationS, suggested, cover };
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

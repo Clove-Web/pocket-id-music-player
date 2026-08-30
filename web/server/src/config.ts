@@ -100,6 +100,20 @@ export const config = {
     bitrate: optional("MUSIC_OPUS_BITRATE", "128k"),
   },
 
+  // "Import from YouTube" on the upload screen: the server shells out to
+  // yt-dlp to fetch the audio, then runs it through the same pipeline as a
+  // file upload (tags, cover, dedupe, pending-review for non-admins). Needs
+  // the `yt-dlp` binary AND ffmpeg on PATH — both are in the Docker image.
+  // Set MUSIC_YTDLP_ENABLED=false to hide the feature. Only youtube.com /
+  // youtu.be URLs are accepted (SSRF guard); playlists are collapsed to the
+  // single video they point at.
+  youtube: {
+    enabled: optional("MUSIC_YTDLP_ENABLED", "true") !== "false",
+    binary: optional("MUSIC_YTDLP_BIN", "yt-dlp"),
+    // Wall-clock cap on one download before the child process is killed.
+    timeoutMs: Number(optional("MUSIC_YTDLP_TIMEOUT_MS", "120000")),
+  },
+
   // Offload audio/cover byte-serving to nginx via X-Accel-Redirect. When set
   // (e.g. "/_media"), /stream and /cover just authenticate then hand the file
   // to nginx by internal-redirect, so the app never streams the bytes and

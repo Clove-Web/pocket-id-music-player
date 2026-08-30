@@ -35,6 +35,9 @@ import {
   isLosslessMaster,
   transcodeToOpus,
   serveAudioFile,
+  downloadFromYouTube,
+  isSupportedYouTubeUrl,
+  YouTubeImportError,
 } from "../lib/media.ts";
 
 export const songRoutes = new Hono<AppEnv>();
@@ -307,6 +310,111 @@ songRoutes.post(
 
   return c.json(toPublicSong(song), 201);
 });
+
+// Import from a YouTube link: yt-dlp fetches the audio, then it flows through
+// the same path as a file upload (title/artist required, cover + dedupe,
+// pending review for non-admins). A download is much heavier than a normal
+// upload, so non-admins get a tighter, longer-window rate limit.
+const importLimit = rateLimit({ name: "yt-import", limit: 10, windowSec: 600 });
+songRoutes.post(
+  "/import",
+  (c, next) => (isAdmin(c.get("user")) ? next() : importLimit(c, next)),
+  requireAuth,
+  async (c) => {
+    if (!config.youtube.enabled) {
+      return c.json({ error: "youtube_import_disabled" }, 503);
+    }
+    await ensureMediaDirs();
+    const user = c.get("user")!;
+
+    const body = await c.req
+      .json<{
+        url?: string;
+        title?: string;
+        artist?: string;
+        album?: string;
+        explicit?: boolean;
+      }>()
+      .catch(() => ({}) as Record<string, never>);
+
+    const link = typeof body.url === "string" ? body.url.trim() : "";
+    if (!link) return c.json({ error: "url_required" }, 400);
+    if (!isSupportedYouTubeUrl(link)) {
+      return c.json({ error: "unsupported_url" }, 400);
+    }
+
+    let dl: Awaited<ReturnType<typeof downloadFromYouTube>>;
+    try {
+      dl = await downloadFromYouTube(link);
+    } catch (err) {
+      if (err instanceof YouTubeImportError) {
+        const status =
+          err.code === "ytdlp_unavailable" || err.code === "youtube_import_disabled"
+            ? 503
+            : err.code === "file_too_large"
+              ? 413
+              : err.code === "unsupported_url"
+                ? 400
+                : err.code === "timed_out"
+                  ? 504
+                  : 502;
+        return c.json({ error: err.code, detail: err.detail }, status);
+      }
+      console.error("youtube import error:", err);
+      return c.json({ error: "download_failed" }, 502);
+    }
+
+    const tags = await extractTags(dl.bytes, undefined);
+    const pick = (v: unknown, ...fallbacks: (string | null)[]): string | null => {
+      const primary = typeof v === "string" ? v.trim() : "";
+      if (primary) return primary;
+      for (const f of fallbacks) {
+        if (f && f.trim()) return f.trim();
+      }
+      return null;
+    };
+
+    const title = pick(body.title, dl.suggested.title, tags.title);
+    const artist = pick(body.artist, dl.suggested.artist, tags.artist);
+    if (!title || !artist) {
+      return c.json({ error: "title_and_artist_required" }, 400);
+    }
+    const album =
+      typeof body.album === "string"
+        ? body.album.trim() || null
+        : (dl.suggested.album ?? tags.album);
+    const explicit = body.explicit === true;
+
+    const filePath = await saveAudio(dl.bytes, `youtube${dl.ext}`);
+
+    let coverPath: string | null = null;
+    if (dl.cover) {
+      coverPath = await saveCover(dl.cover.data, dl.cover.ext);
+    } else if (tags.cover) {
+      coverPath = await saveCover(tags.cover.data, tags.cover.ext);
+    }
+
+    const status = isAdmin(user) ? "approved" : "pending";
+    const rows = await sql<Song[]>`
+      INSERT INTO songs
+        (title, artist, album, cover_path, file_path, mime, duration_s,
+         size_bytes, explicit, normalized_title, uploaded_by, status)
+      VALUES
+        (${title}, ${artist}, ${album ?? null}, ${coverPath}, ${filePath},
+         ${mimeForAudioPath(filePath)}, ${tags.durationS ?? dl.durationS},
+         ${dl.bytes.byteLength}, ${explicit}, ${normalizeTitle(title)},
+         ${user.id}, ${status})
+      RETURNING *
+    `;
+    const song = rows[0]!;
+
+    findAndFlagDuplicates(song).catch((err) =>
+      console.error("duplicate detection failed:", err),
+    );
+
+    return c.json(toPublicSong(song), 201);
+  },
+);
 
 // Audio streaming with HTTP Range support (seek/scrub). Open to everyone —
 // streaming needs no account.

@@ -167,6 +167,45 @@ export const api = {
     return fetch(url("/api/songs"), { method: "POST", body: form }).then(json<Song>);
   },
 
+  // Import a single YouTube video's audio via server-side yt-dlp. Optional
+  // title/artist/album/explicit override what yt-dlp reads from the video.
+  async importSong(body: {
+    url: string;
+    title?: string;
+    artist?: string;
+    album?: string;
+    explicit?: boolean;
+  }): Promise<Song> {
+    const res = await fetch(url("/api/songs/import"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return (await res.json()) as Song;
+
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      detail?: string;
+    };
+    const friendly: Record<string, string> = {
+      youtube_import_disabled: "YouTube import is turned off on this server.",
+      ytdlp_unavailable: "yt-dlp isn't installed on the server.",
+      unsupported_url: "Only youtube.com and youtu.be links are supported.",
+      url_required: "Paste a YouTube link first.",
+      file_too_large: "That video's audio is over the upload size limit.",
+      timed_out: "The download took too long and was stopped.",
+      title_and_artist_required:
+        "Couldn't read a title/artist — fill them in and retry.",
+      download_failed: "yt-dlp couldn't download that video.",
+    };
+    throw new Error(
+      (data.error && friendly[data.error]) ||
+        data.detail ||
+        data.error ||
+        `${res.status} ${res.statusText}`,
+    );
+  },
+
   updateSong(id: string, form: FormData): Promise<Song> {
     return fetch(url(`/api/songs/${id}`), { method: "PATCH", body: form }).then(
       json<Song>,

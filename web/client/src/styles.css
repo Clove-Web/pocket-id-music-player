@@ -1033,6 +1033,33 @@ button {
   max-width: none;
 }
 
+/* segmented Files / YouTube switch in the upload modal */
+.seg {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  margin-bottom: 1rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.seg-btn {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.seg-btn.active {
+  background: var(--panel);
+  color: var(--text);
+}
+
 /* --- toast --- */
 
 .toast {
