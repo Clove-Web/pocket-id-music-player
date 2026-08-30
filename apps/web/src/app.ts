@@ -1154,6 +1154,12 @@ function songLink(id: string): string {
   return `${location.origin}/song/${id}`;
 }
 
+// Multi-artist tracks store a comma-separated string ("A, B, C"). The player
+// bar is tight, so it shows only the first (primary) name.
+function primaryArtist(name: string): string {
+  return name.split(",")[0]!.trim() || name;
+}
+
 function copySongLink(id: string): void {
   const link = songLink(id);
   const done = () => flash("Link copied");
@@ -2304,8 +2310,8 @@ function mountPlayerBar(el: HTMLElement, song: Song): void {
         <span class="song-title">${escapeHtml(song.title)}</span>
         ${
           song.artistId
-            ? `<button class="song-artist artist-link" id="pb-artist">${escapeHtml(song.artist)}</button>`
-            : `<span class="song-artist">${escapeHtml(song.artist)}</span>`
+            ? `<button class="song-artist artist-link" id="pb-artist">${escapeHtml(primaryArtist(song.artist))}</button>`
+            : `<span class="song-artist">${escapeHtml(primaryArtist(song.artist))}</span>`
         }
       </div>
       <div class="pb-song-actions">

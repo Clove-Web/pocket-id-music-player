@@ -404,6 +404,17 @@ artistRoutes.post("/link-requests/:id/reject", requireAuth, async (c) => {
 
 // --- helpers -----------------------------------------------------------
 
+// Raw artist row by id, for the server's /artist/:id link-unfurl route.
+// Malformed (non-uuid) ids would make Postgres throw — treat as "not found".
+export async function getArtist(id: string): Promise<Artist | undefined> {
+  try {
+    const rows = await sql<Artist[]>`SELECT * FROM artists WHERE id = ${id}`;
+    return rows[0];
+  } catch {
+    return undefined;
+  }
+}
+
 async function songCount(artistId: string): Promise<number> {
   const rows = await sql<Array<{ count: string }>>`
     SELECT count(*) FROM song_artists WHERE artist_id = ${artistId}

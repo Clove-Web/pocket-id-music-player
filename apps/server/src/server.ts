@@ -16,7 +16,7 @@ import {
   versionNames,
   platformNames,
 } from "./lib/downloads.ts";
-import { ensureMediaDirs } from "./lib/media.ts";
+import { ensureMediaDirs, mimeForAudioPath } from "./lib/media.ts";
 import { startPocketIdGuard } from "./lib/pocketid-guard.ts";
 import { authRoutes } from "./routes/auth.ts";
 import {
@@ -26,7 +26,7 @@ import {
   serveSongDownload,
 } from "./routes/songs.ts";
 import { playlistRoutes } from "./routes/playlists.ts";
-import { artistRoutes } from "./routes/artists.ts";
+import { artistRoutes, getArtist } from "./routes/artists.ts";
 import { duplicateRoutes } from "./routes/duplicates.ts";
 import { lastfmRoutes } from "./routes/lastfm.ts";
 
@@ -163,25 +163,53 @@ app.get("/song/:id", async (c) => {
   });
 });
 
+// Inline audio-player embed for a song, for platforms that render a
+// `twitter:card=player` iframe (Discord, Twitter/X). Deliberately framework-
+// free and tiny; served with no X-Frame-Options / frame-ancestors so it can be
+// embedded cross-origin. Open to everyone (streaming needs no account).
+app.get("/embed/song/:id", async (c) => {
+  const song = await getSong(c.req.param("id"));
+  if (!song || !canSee(song, c.get("user"))) {
+    return new Response("Not found", { status: 404 });
+  }
+  return new Response(embedPage(song), {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=300",
+    },
+  });
+});
+
+// Shareable artist link: same idea as /song/:id, but a plain summary card
+// (name, bio, avatar) — no audio/player. Falls through to a normal SPA load
+// for humans.
+app.get("/artist/:id", async (c) => {
+  const artist = await getArtist(c.req.param("id"));
+  const file = Bun.file(join(webSrc, "index.html"));
+  if (!(await file.exists())) return new Response("Not found", { status: 404 });
+  let html = await file.text();
+  if (artist) html = injectArtistMeta(html, artist);
+  return new Response(html, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+  });
+});
+
 // SPA fallback: any non-API route returns index.html. Also no-cache, so a
 // stale shell can't keep pointing the webview at an old asset.
 app.get("*", () => serveFile(join(webSrc, "index.html"), "no-cache"));
 
-// Rewrite the static unfurl tags in index.html for a specific song. Bots don't
-// run JS, so this has to happen server-side; humans still boot the SPA normally.
-function injectSongMeta(
-  html: string,
-  song: { id: string; title: string; artist: string; cover_path: string | null },
-): string {
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const title = esc(`${song.title} — ${song.artist}`);
-  const desc = esc(`Listen to ${song.title} by ${song.artist} on Doughmination Music.`);
-  const url = `${config.appUrl}/song/${song.id}`;
-  const image = song.cover_path
-    ? `${config.appUrl}/api/songs/${song.id}/cover`
-    : `${config.appUrl}/favicon.png`;
+const htmlEsc = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+// The common title / description / url / image swaps applied to index.html's
+// static unfurl tags. Song- or artist-specific extras are layered on by the
+// callers below.
+function injectBaseMeta(
+  html: string,
+  meta: { title: string; desc: string; url: string; image: string },
+): string {
+  const title = htmlEsc(meta.title);
+  const desc = htmlEsc(meta.desc);
   return html
     .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
     .replace(
@@ -192,11 +220,125 @@ function injectSongMeta(
       /(<meta (?:property|name)="(?:og:description|twitter:description|description)" content=")[^"]*(")/g,
       `$1${desc}$2`,
     )
-    .replace(/(<meta property="og:url" content=")[^"]*(")/g, `$1${url}$2`)
+    .replace(/(<meta property="og:url" content=")[^"]*(")/g, `$1${meta.url}$2`)
     .replace(
       /(<meta (?:property|name)="(?:og:image|twitter:image)" content=")[^"]*(")/g,
-      `$1${image}$2`,
+      `$1${meta.image}$2`,
     );
+}
+
+function injectArtistMeta(
+  html: string,
+  artist: { id: string; name: string; bio: string | null; avatar_path: string | null },
+): string {
+  return injectBaseMeta(html, {
+    title: `${artist.name} — Doughmination Music`,
+    desc: artist.bio || `Music by ${artist.name} on Doughmination Music.`,
+    url: `${config.appUrl}/artist/${artist.id}`,
+    image: artist.avatar_path
+      ? `${config.appUrl}/api/artists/${artist.id}/avatar`
+      : `${config.appUrl}/favicon.png`,
+  }).replace(
+    "</head>",
+    `  <meta property="og:type" content="profile" />\n  </head>`,
+  );
+}
+
+type ShareSong = {
+  id: string;
+  title: string;
+  artist: string;
+  cover_path: string | null;
+  duration_s: number | null;
+  stream_path: string | null;
+  file_path: string;
+};
+
+function songUrls(song: ShareSong) {
+  return {
+    page: `${config.appUrl}/song/${song.id}`,
+    embed: `${config.appUrl}/embed/song/${song.id}`,
+    stream: `${config.appUrl}/api/songs/${song.id}/stream`,
+    image: song.cover_path
+      ? `${config.appUrl}/api/songs/${song.id}/cover`
+      : `${config.appUrl}/favicon.png`,
+    audioMime: mimeForAudioPath(song.stream_path ?? song.file_path),
+  };
+}
+
+// Rewrite the static unfurl tags in index.html for a specific song, and append
+// audio/player tags so link previews get an inline play button where supported.
+// Bots don't run JS, so this has to happen server-side; humans still boot the
+// SPA normally.
+function injectSongMeta(html: string, song: ShareSong): string {
+  const u = songUrls(song);
+  const extra =
+    [
+      `<meta property="og:type" content="music.song" />`,
+      song.duration_s ? `<meta property="music:duration" content="${song.duration_s}" />` : "",
+      `<meta property="og:audio" content="${u.stream}" />`,
+      `<meta property="og:audio:secure_url" content="${u.stream}" />`,
+      `<meta property="og:audio:type" content="${u.audioMime}" />`,
+      `<meta name="twitter:player" content="${u.embed}" />`,
+      `<meta name="twitter:player:width" content="480" />`,
+      `<meta name="twitter:player:height" content="160" />`,
+      `<meta name="twitter:player:stream" content="${u.stream}" />`,
+    ]
+      .filter(Boolean)
+      .join("\n    ") + "\n  ";
+
+  return injectBaseMeta(html, {
+    title: `${song.title} — ${song.artist}`,
+    desc: `Listen to ${song.title} by ${song.artist} on Doughmination Music.`,
+    url: u.page,
+    image: u.image,
+  })
+    // summary -> player so a preview iframe (twitter:player below) is used.
+    .replace(/(<meta name="twitter:card" content=")[^"]*(")/, `$1player$2`)
+    .replace("</head>", `  ${extra}</head>`);
+}
+
+function embedPage(song: ShareSong): string {
+  const u = songUrls(song);
+  const title = htmlEsc(`${song.title} — ${song.artist}`);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <meta name="theme-color" content="#f5a9b8" />
+  <meta property="og:type" content="music.song" />
+  <meta property="og:title" content="${title}" />
+  <meta property="og:image" content="${u.image}" />
+  <meta property="og:audio" content="${u.stream}" />
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif;
+      background: #12141c; color: #f4f6fb; display: flex; gap: 14px;
+      align-items: center; padding: 14px; }
+    img { width: 92px; height: 92px; border-radius: 10px; object-fit: cover;
+      background: #1b1e2a; flex-shrink: 0; }
+    .meta { min-width: 0; flex: 1; }
+    .t { font-weight: 700; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; }
+    .a { color: #9aa3c2; font-size: .85rem; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; margin: 2px 0 8px; }
+    audio { width: 100%; height: 34px; }
+    a.brand { color: #9aa3c2; font-size: .7rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <img src="${u.image}" alt="" />
+  <div class="meta">
+    <div class="t">${htmlEsc(song.title)}</div>
+    <div class="a">${htmlEsc(song.artist)}</div>
+    <audio controls preload="none" src="${u.stream}"></audio>
+    <div><a class="brand" href="${u.page}" target="_blank" rel="noopener">Doughmination Music ↗</a></div>
+  </div>
+</body>
+</html>`;
 }
 
 console.log(`Music server on ${config.appUrl} (port ${config.port})`);

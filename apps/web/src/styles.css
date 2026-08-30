@@ -411,6 +411,10 @@ button {
 .song-artist {
   color: var(--muted);
   font-size: 0.85rem;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .artist-link {
@@ -421,7 +425,11 @@ button {
   font: inherit;
   text-align: left;
   cursor: pointer;
-  width: fit-content;
+  /* inline-block so the click target hugs the text, but max-width + ellipsis
+     keep a long (or multi-) artist name from overflowing the row. */
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
 }
 
 .artist-link:hover,
