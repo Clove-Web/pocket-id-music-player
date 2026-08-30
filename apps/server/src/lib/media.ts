@@ -4,6 +4,7 @@ import {
   mkdir,
   writeFile,
   rm,
+  stat,
 } from "node:fs/promises";
 import {
   join,
@@ -196,6 +197,82 @@ export async function transcodeToOpus(
     await rm(outAbs, { force: true }).catch(() => {});
     return null;
   }
+}
+
+// Serve a stored audio file as an HTTP response: HTTP Range (seek/scrub),
+// nginx X-Accel offload when configured, hard caching, and — when
+// `attachmentName` is set — a Content-Disposition that makes the browser save
+// it instead of playing it (used by the /song/:id?download=1 share link).
+//
+// Shared by the auth-gated /api/songs/:id/stream endpoint and the public
+// download route so the byte-serving logic lives in exactly one place.
+export async function serveAudioFile(
+  rangeHeader: string | undefined,
+  opts: {
+    absPath: string;
+    servePath: string; // stored relative path, for X-Accel-Redirect
+    mime: string;
+    cacheControl?: string;
+    attachmentName?: string;
+  },
+): Promise<Response> {
+  const { absPath, servePath, mime, attachmentName } = opts;
+  const cacheControl = opts.cacheControl ?? "private, max-age=31536000, immutable";
+
+  const info = await stat(absPath).catch(() => null);
+  if (!info) return new Response("Not found", { status: 404 });
+  const total = info.size;
+
+  const disposition = attachmentName
+    ? `attachment; filename="${attachmentName.replace(/["\\\r\n]/g, "")}"; ` +
+      `filename*=UTF-8''${encodeURIComponent(attachmentName)}`
+    : undefined;
+
+  // Offload to nginx if configured: we've already done any auth check, so hand
+  // the file off by internal redirect and let nginx do sendfile + range.
+  if (config.xaccelPrefix) {
+    const headers: Record<string, string> = {
+      "content-type": mime,
+      "cache-control": cacheControl,
+      "accept-ranges": "bytes",
+      "x-accel-redirect": `${config.xaccelPrefix}/${encodeURI(servePath)}`,
+    };
+    if (disposition) headers["content-disposition"] = disposition;
+    return new Response(null, { headers });
+  }
+
+  if (!rangeHeader) {
+    const headers: Record<string, string> = {
+      "content-type": mime,
+      "content-length": String(total),
+      "accept-ranges": "bytes",
+      "cache-control": cacheControl,
+    };
+    if (disposition) headers["content-disposition"] = disposition;
+    return new Response(Bun.file(absPath), { headers });
+  }
+
+  const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+  const start = match?.[1] ? Number(match[1]) : 0;
+  const end = match?.[2] ? Number(match[2]) : total - 1;
+
+  if (start >= total || end >= total || start > end) {
+    return new Response("Range Not Satisfiable", {
+      status: 416,
+      headers: { "content-range": `bytes */${total}` },
+    });
+  }
+
+  const chunk = Bun.file(absPath).slice(start, end + 1);
+  const headers: Record<string, string> = {
+    "content-type": mime,
+    "content-length": String(end - start + 1),
+    "content-range": `bytes ${start}-${end}/${total}`,
+    "accept-ranges": "bytes",
+    "cache-control": cacheControl,
+  };
+  if (disposition) headers["content-disposition"] = disposition;
+  return new Response(chunk, { status: 206, headers });
 }
 
 // Persist a cover image. Returns the relative path stored in the DB.

@@ -20,10 +20,12 @@ import { normalizeTitle, tightTitleKey, diceCoefficient } from "../lib/text.ts";
 
 export const playlistRoutes = new Hono<AppEnv>();
 
-playlistRoutes.use("*", requireAuth);
+// Viewing shared playlists (and their covers) is open to everyone; everything
+// that creates or mutates a playlist requires an account — `requireAuth` is
+// applied per-route below.
 
 // My own playlists.
-playlistRoutes.get("/", async (c) => {
+playlistRoutes.get("/", requireAuth, async (c) => {
   const user = c.get("user")!;
   const rows = await sql<Playlist[]>`
     SELECT * FROM playlists
@@ -96,7 +98,7 @@ playlistRoutes.get("/public", async (c) => {
   );
 });
 
-playlistRoutes.post("/", async (c) => {
+playlistRoutes.post("/", requireAuth, async (c) => {
   const user = c.get("user")!;
   const body = await c.req
     .json<{ name?: string }>()
@@ -114,7 +116,7 @@ playlistRoutes.post("/", async (c) => {
 
 // Viewable by the owner, or by anyone if the playlist is public.
 playlistRoutes.get("/:id", async (c) => {
-  const user = c.get("user")!;
+  const user = c.get("user");
   const rows = await sql<
     Array<Playlist & { owner_name: string | null; owner_avatar: string | null }>
   >`
@@ -126,11 +128,15 @@ playlistRoutes.get("/:id", async (c) => {
   const pl = rows[0];
   if (!pl) return c.json({ error: "not_found" }, 404);
 
-  const isOwner = pl.user_id === user.id;
+  const isOwner = Boolean(user) && pl.user_id === user!.id;
   if (!isOwner && !pl.is_public) {
     return c.json({ error: "not_found" }, 404);
   }
 
+  const me = user?.id ?? null;
+  const visible = me
+    ? sql`(s.status = 'approved' OR s.uploaded_by = ${me})`
+    : sql`s.status = 'approved'`;
   const songs = await sql<
     Array<Song & { position: number; resolved_artist_id: string | null }>
   >`
@@ -139,7 +145,7 @@ playlistRoutes.get("/:id", async (c) => {
        ORDER BY (sa.role = 'primary') DESC, sa.role LIMIT 1) AS resolved_artist_id
     FROM playlist_songs ps
     JOIN songs s ON s.id = ps.song_id
-    WHERE ps.playlist_id = ${pl.id}
+    WHERE ps.playlist_id = ${pl.id} AND ${visible}
     ORDER BY ps.position ASC, ps.song_id ASC
   `;
 
@@ -166,7 +172,7 @@ playlistRoutes.get("/:id", async (c) => {
 });
 
 // Rename and/or toggle sharing. Owner only.
-playlistRoutes.patch("/:id", async (c) => {
+playlistRoutes.patch("/:id", requireAuth, async (c) => {
   const pl = await owned(c);
   if (!pl) return c.json({ error: "not_found" }, 404);
 
@@ -187,7 +193,7 @@ playlistRoutes.patch("/:id", async (c) => {
   return c.json(toPublicPlaylist(rows[0]!));
 });
 
-playlistRoutes.delete("/:id", async (c) => {
+playlistRoutes.delete("/:id", requireAuth, async (c) => {
   const pl = await owned(c);
   if (!pl) return c.json({ error: "not_found" }, 404);
 
@@ -198,12 +204,12 @@ playlistRoutes.delete("/:id", async (c) => {
 // Cover image. Viewable by anyone who can view the playlist itself
 // (owner, or anyone if it's public); replacing it is owner-only.
 playlistRoutes.get("/:id/cover", async (c) => {
-  const user = c.get("user")!;
+  const user = c.get("user");
   const pl = (
     await sql<Playlist[]>`SELECT * FROM playlists WHERE id = ${c.req.param("id")!}`
   )[0];
   if (!pl?.cover_path) return c.json({ error: "not_found" }, 404);
-  if (pl.user_id !== user.id && !pl.is_public) {
+  if (pl.user_id !== user?.id && !pl.is_public) {
     return c.json({ error: "not_found" }, 404);
   }
 
@@ -219,7 +225,7 @@ playlistRoutes.get("/:id/cover", async (c) => {
   });
 });
 
-playlistRoutes.post("/:id/cover", async (c) => {
+playlistRoutes.post("/:id/cover", requireAuth, async (c) => {
   const pl = await owned(c);
   if (!pl) return c.json({ error: "not_found" }, 404);
 
@@ -243,7 +249,7 @@ playlistRoutes.post("/:id/cover", async (c) => {
   return c.json(toPublicPlaylist(rows[0]!));
 });
 
-playlistRoutes.post("/:id/songs", async (c) => {
+playlistRoutes.post("/:id/songs", requireAuth, async (c) => {
   const pl = await owned(c);
   if (!pl) return c.json({ error: "not_found" }, 404);
 
@@ -268,7 +274,7 @@ playlistRoutes.post("/:id/songs", async (c) => {
   return c.json({ ok: true });
 });
 
-playlistRoutes.delete("/:id/songs/:songId", async (c) => {
+playlistRoutes.delete("/:id/songs/:songId", requireAuth, async (c) => {
   const pl = await owned(c);
   if (!pl) return c.json({ error: "not_found" }, 404);
 

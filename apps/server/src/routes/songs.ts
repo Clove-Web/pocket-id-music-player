@@ -4,7 +4,12 @@ import { Hono } from "hono";
 import { stat, unlink } from "node:fs/promises";
 
 import { config } from "../config.ts";
-import { sql, type Song } from "../db/index.ts";
+import {
+  sql,
+  type Song,
+  type SongEditRequest,
+  type User,
+} from "../db/index.ts";
 import {
   requireAuth,
   isAdmin,
@@ -29,18 +34,26 @@ import {
   mimeForCoverPath,
   isLosslessMaster,
   transcodeToOpus,
+  serveAudioFile,
 } from "../lib/media.ts";
 
 export const songRoutes = new Hono<AppEnv>();
 
-// Everyone authenticated sees the whole shared library.
-songRoutes.get("/", requireAuth, async (c) => {
+// Open to everyone: the shared library streams without an account. Signed-in
+// users additionally see their own not-yet-approved uploads; anonymous callers
+// (and other users) only see approved songs.
+songRoutes.get("/", async (c) => {
   const q = c.req.query("q")?.trim();
+  const me = c.get("user")?.id ?? null;
+  const visible = me
+    ? sql`(s.status = 'approved' OR s.uploaded_by = ${me})`
+    : sql`s.status = 'approved'`;
   const rows = await sql<Array<Song & { resolved_artist_id: string | null }>>`
     SELECT s.*,
       (SELECT sa.artist_id FROM song_artists sa WHERE sa.song_id = s.id
        ORDER BY (sa.role = 'primary') DESC, sa.role LIMIT 1) AS resolved_artist_id
     FROM songs s
+    WHERE ${visible}
     ORDER BY s.created_at DESC
   `;
   if (!q) return c.json(rows.map((s) => toPublicSong(s, s.resolved_artist_id)));
@@ -71,9 +84,139 @@ songRoutes.get("/", requireAuth, async (c) => {
   return c.json(scored.map((r) => toPublicSong(r.song, r.song.resolved_artist_id)));
 });
 
-songRoutes.get("/:id", requireAuth, async (c) => {
+// --- liked songs (per-user favourites) ---------------------------------
+// Declared before "/:id" so "liked" isn't captured as a song id.
+
+songRoutes.get("/liked", requireAuth, async (c) => {
+  const user = c.get("user")!;
+  const rows = await sql<Array<Song & { resolved_artist_id: string | null }>>`
+    SELECT s.*,
+      (SELECT sa.artist_id FROM song_artists sa WHERE sa.song_id = s.id
+       ORDER BY (sa.role = 'primary') DESC, sa.role LIMIT 1) AS resolved_artist_id
+    FROM liked_songs l
+    JOIN songs s ON s.id = l.song_id
+    WHERE l.user_id = ${user.id}
+      AND (s.status = 'approved' OR s.uploaded_by = ${user.id})
+    ORDER BY l.created_at DESC
+  `;
+  return c.json(rows.map((s) => toPublicSong(s, s.resolved_artist_id)));
+});
+
+// --- admin: pending uploads ------------------------------------------------
+
+songRoutes.get("/pending", requireAuth, async (c) => {
+  if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
+  const rows = await sql<
+    Array<Song & { resolved_artist_id: string | null; uploader_name: string | null }>
+  >`
+    SELECT s.*,
+      (SELECT sa.artist_id FROM song_artists sa WHERE sa.song_id = s.id
+       ORDER BY (sa.role = 'primary') DESC, sa.role LIMIT 1) AS resolved_artist_id,
+      u.name AS uploader_name
+    FROM songs s
+    LEFT JOIN users u ON u.id = s.uploaded_by
+    WHERE s.status = 'pending'
+    ORDER BY s.created_at ASC
+  `;
+  return c.json(
+    rows.map((s) => ({
+      ...toPublicSong(s, s.resolved_artist_id),
+      uploaderName: s.uploader_name,
+    })),
+  );
+});
+
+// --- admin: song metadata edit requests ---------------------------------
+
+songRoutes.get("/edit-requests", requireAuth, async (c) => {
+  if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
+  const status = c.req.query("status") ?? "pending";
+  const rows = await sql<
+    Array<
+      SongEditRequest & {
+        cur_title: string;
+        cur_artist: string;
+        cur_album: string | null;
+        cur_explicit: boolean;
+        requested_by_name: string | null;
+      }
+    >
+  >`
+    SELECT r.*,
+      s.title    AS cur_title,
+      s.artist   AS cur_artist,
+      s.album    AS cur_album,
+      s.explicit AS cur_explicit,
+      u.name     AS requested_by_name
+    FROM song_edit_requests r
+    JOIN songs s      ON s.id = r.song_id
+    LEFT JOIN users u ON u.id = r.requested_by
+    WHERE r.status = ${status}
+    ORDER BY r.created_at ASC
+  `;
+  return c.json(rows.map(toPublicEditRequest));
+});
+
+songRoutes.post("/edit-requests/:reqId/approve", requireAuth, async (c) => {
+  const user = c.get("user")!;
+  if (!isAdmin(user)) return c.json({ error: "forbidden" }, 403);
+
+  const req = (
+    await sql<SongEditRequest[]>`
+      SELECT * FROM song_edit_requests WHERE id = ${c.req.param("reqId")!} AND status = 'pending'
+    `
+  )[0];
+  if (!req) return c.json({ error: "not_found" }, 404);
+
+  const song = await getSong(req.song_id);
+  if (!song) {
+    await sql`
+      UPDATE song_edit_requests
+      SET status = 'rejected', decided_at = now(), decided_by = ${user.id}
+      WHERE id = ${req.id}
+    `;
+    return c.json({ error: "song_not_found" }, 404);
+  }
+
+  const title = (req.title ?? song.title).trim();
+  const artist = (req.artist ?? song.artist).trim();
+  const album = req.album !== null ? req.album : song.album;
+  const explicit = req.explicit !== null ? req.explicit : song.explicit;
+
+  await sql.begin(async (tx) => {
+    await tx`
+      UPDATE songs
+      SET title = ${title}, artist = ${artist}, album = ${album},
+          explicit = ${explicit}, normalized_title = ${normalizeTitle(title)}
+      WHERE id = ${song.id}
+    `;
+    await tx`DELETE FROM song_lyrics WHERE song_id = ${song.id}`;
+    await tx`
+      UPDATE song_edit_requests
+      SET status = 'approved', decided_at = now(), decided_by = ${user.id}
+      WHERE id = ${req.id}
+    `;
+  });
+  return c.json({ ok: true });
+});
+
+songRoutes.post("/edit-requests/:reqId/reject", requireAuth, async (c) => {
+  const user = c.get("user")!;
+  if (!isAdmin(user)) return c.json({ error: "forbidden" }, 403);
+  const rows = await sql<SongEditRequest[]>`
+    UPDATE song_edit_requests
+    SET status = 'rejected', decided_at = now(), decided_by = ${user.id}
+    WHERE id = ${c.req.param("reqId")!} AND status = 'pending'
+    RETURNING *
+  `;
+  if (!rows[0]) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true });
+});
+
+songRoutes.get("/:id", async (c) => {
   const song = await getSong(c.req.param("id")!);
   if (!song) return c.json({ error: "not_found" }, 404);
+  if (!canSee(song, c.get("user"))) return c.json({ error: "not_found" }, 404);
   return c.json(toPublicSong(song, await getPrimaryArtistId(song.id)));
 });
 
@@ -125,14 +268,18 @@ songRoutes.post(
     coverPath = await saveCover(tags.cover.data, tags.cover.ext);
   }
 
+  // Admin uploads go live immediately; everyone else's wait for admin review
+  // (hidden from the public library, visible to the uploader) — see GET "/".
+  const status = isAdmin(user) ? "approved" : "pending";
+
   const rows = await sql<Song[]>`
     INSERT INTO songs
       (title, artist, album, cover_path, file_path, mime, duration_s,
-       size_bytes, explicit, normalized_title, uploaded_by)
+       size_bytes, explicit, normalized_title, uploaded_by, status)
     VALUES
       (${title}, ${artist}, ${album ?? null}, ${coverPath}, ${filePath},
        ${file.type || null}, ${tags.durationS}, ${file.size}, ${explicit},
-       ${normalizeTitle(title)}, ${user.id})
+       ${normalizeTitle(title)}, ${user.id}, ${status})
     RETURNING *
   `;
   const song = rows[0]!;
@@ -161,106 +308,31 @@ songRoutes.post(
   return c.json(toPublicSong(song), 201);
 });
 
-// Audio streaming with HTTP Range support (seek/scrub).
-songRoutes.get("/:id/stream", requireAuth, async (c) => {
+// Audio streaming with HTTP Range support (seek/scrub). Open to everyone —
+// streaming needs no account.
+songRoutes.get("/:id/stream", async (c) => {
   const song = await getSong(c.req.param("id")!);
-  if (!song) return c.json({ error: "not_found" }, 404);
-
-  // Prefer the transcoded Opus copy when it exists (smaller = far better on
-  // mobile); otherwise stream the original master. If the Opus file is somehow
-  // missing on disk, fall back to the master rather than 404.
-  let servePath = song.stream_path ?? song.file_path;
-  let abs = resolveMedia(servePath);
-  let info = await stat(abs).catch(() => null);
-  if (!info && song.stream_path) {
-    servePath = song.file_path;
-    abs = resolveMedia(servePath);
-    info = await stat(abs).catch(() => null);
+  if (!song || !canSee(song, c.get("user"))) {
+    return c.json({ error: "not_found" }, 404);
   }
-  if (!info) return c.json({ error: "file_missing" }, 404);
-
-  const total = info.size;
-  // Prefer the curated extension->MIME map over the browser-reported upload
-  // type (song.mime is often "audio/x-flac", "application/ogg", or empty,
-  // which can make players refuse or mis-handle FLAC/OGG). Fall back to the
-  // stored type only if the extension is unrecognised.
-  const extMime = mimeForAudioPath(servePath);
-  const mime =
-    extMime !== "application/octet-stream"
-      ? extMime
-      : song.mime && song.mime.startsWith("audio/")
-        ? song.mime
-        : extMime;
-  const range = c.req.header("range");
-
-  // The audio bytes for a given song id never change (an edit only touches
-  // metadata; re-uploading makes a new id), so let the browser cache them
-  // hard. Without this the stream had no cache headers at all, so every
-  // scrub, replay, or revisit re-downloaded the whole file — the main cause
-  // of "taking forever to load", especially on mobile where media buffers
-  // get dropped aggressively. `private` because the endpoint is auth-gated.
-  const cacheControl = "private, max-age=31536000, immutable";
-
-  // Offload to nginx if configured: we've authenticated, so hand the file off
-  // by internal redirect and let nginx do sendfile + range + caching. The app
-  // never touches the bytes — the big win for a large, multi-user library.
-  if (config.xaccelPrefix) {
-    return new Response(null, {
-      headers: {
-        "content-type": mime,
-        "cache-control": cacheControl,
-        "accept-ranges": "bytes",
-        "x-accel-redirect": `${config.xaccelPrefix}/${encodeURI(servePath)}`,
-      },
-    });
-  }
-
-  if (!range) {
-    // Pass the BunFile directly (not .stream()): Bun then sends a real
-    // Content-Length via efficient file streaming. With .stream() the response
-    // went out chunked with no length, so the browser couldn't size the file,
-    // couldn't range-seek, reported duration as Infinity (broken timer), and
-    // progressively downloaded the whole track before playing.
-    return new Response(Bun.file(abs), {
-      headers: {
-        "content-type": mime,
-        "content-length": String(total),
-        "accept-ranges": "bytes",
-        "cache-control": cacheControl,
-      },
-    });
-  }
-
-  const match = /bytes=(\d*)-(\d*)/.exec(range);
-  const start = match?.[1] ? Number(match[1]) : 0;
-  const end = match?.[2] ? Number(match[2]) : total - 1;
-
-  if (start >= total || end >= total || start > end) {
-    return new Response("Range Not Satisfiable", {
-      status: 416,
-      headers: { "content-range": `bytes */${total}` },
-    });
-  }
-
-  // The sliced BunFile is a Blob backed by the file; passing it directly lets
-  // Bun stream exactly those bytes with a correct Content-Length (see note
-  // above on why .stream() was wrong).
-  const chunk = Bun.file(abs).slice(start, end + 1);
-  return new Response(chunk, {
-    status: 206,
-    headers: {
-      "content-type": mime,
-      "content-length": String(end - start + 1),
-      "content-range": `bytes ${start}-${end}/${total}`,
-      "accept-ranges": "bytes",
-      "cache-control": cacheControl,
-    },
-  });
+  return serveSongStream(c.req.header("range"), song);
 });
 
-songRoutes.get("/:id/lyrics", requireAuth, async (c) => {
+// Download the ORIGINAL uploaded master (never the Opus transcode) as a file.
+// Backs the /song/:id?download=1 share link. Open to everyone.
+songRoutes.get("/:id/download", async (c) => {
   const song = await getSong(c.req.param("id")!);
-  if (!song) return c.json({ error: "not_found" }, 404);
+  if (!song || !canSee(song, c.get("user"))) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  return serveSongDownload(c.req.header("range"), song);
+});
+
+songRoutes.get("/:id/lyrics", async (c) => {
+  const song = await getSong(c.req.param("id")!);
+  if (!song || !canSee(song, c.get("user"))) {
+    return c.json({ error: "not_found" }, 404);
+  }
 
   const lyrics = await getLyrics({
     id: song.id,
@@ -304,6 +376,88 @@ songRoutes.get("/:id/cover", async (c) => {
       "cache-control": coverCache,
     },
   });
+});
+
+// --- like / unlike -------------------------------------------------------
+
+songRoutes.put("/:id/like", requireAuth, async (c) => {
+  const user = c.get("user")!;
+  const song = await getSong(c.req.param("id")!);
+  if (!song || !canSee(song, user)) return c.json({ error: "not_found" }, 404);
+  await sql`
+    INSERT INTO liked_songs (user_id, song_id)
+    VALUES (${user.id}, ${song.id})
+    ON CONFLICT (user_id, song_id) DO NOTHING
+  `;
+  return c.json({ liked: true });
+});
+
+songRoutes.delete("/:id/like", requireAuth, async (c) => {
+  const user = c.get("user")!;
+  await sql`
+    DELETE FROM liked_songs
+    WHERE user_id = ${user.id} AND song_id = ${c.req.param("id")!}
+  `;
+  return c.json({ liked: false });
+});
+
+// --- admin: approve / reject a pending upload ---------------------------
+
+songRoutes.post("/:id/approve", requireAuth, async (c) => {
+  if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
+  const rows = await sql<Song[]>`
+    UPDATE songs SET status = 'approved'
+    WHERE id = ${c.req.param("id")!} AND status = 'pending'
+    RETURNING *
+  `;
+  if (!rows[0]) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true });
+});
+
+songRoutes.post("/:id/reject", requireAuth, async (c) => {
+  if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
+  const song = await getSong(c.req.param("id")!);
+  if (!song || song.status !== "pending") {
+    return c.json({ error: "not_found" }, 404);
+  }
+  // Reject == unwanted upload: remove it and its files (mirrors DELETE /:id
+  // and the duplicate queue's "mark duplicate" behaviour).
+  await sql`DELETE FROM songs WHERE id = ${song.id}`;
+  await unlink(resolveMedia(song.file_path)).catch(() => {});
+  if (song.stream_path) await unlink(resolveMedia(song.stream_path)).catch(() => {});
+  if (song.cover_path) await unlink(resolveMedia(song.cover_path)).catch(() => {});
+  return c.json({ ok: true });
+});
+
+// Non-admins propose a metadata fix; an admin approves it (see the
+// /edit-requests routes above). Admins use PATCH below instead.
+songRoutes.post("/:id/edit-requests", requireAuth, async (c) => {
+  const user = c.get("user")!;
+  const song = await getSong(c.req.param("id")!);
+  if (!song || !canSee(song, user)) return c.json({ error: "not_found" }, 404);
+
+  const body = await c.req
+    .json<{ title?: string; artist?: string; album?: string; explicit?: boolean }>()
+    .catch(() => ({}) as Record<string, never>);
+
+  const title = body.title?.trim() || null;
+  const artist = body.artist?.trim() || null;
+  const album = typeof body.album === "string" ? body.album.trim() : null;
+  const explicit = typeof body.explicit === "boolean" ? body.explicit : null;
+  if (!title && !artist && album === null && explicit === null) {
+    return c.json({ error: "nothing_to_change" }, 400);
+  }
+
+  await sql`
+    INSERT INTO song_edit_requests
+      (song_id, requested_by, title, artist, album, explicit)
+    VALUES (${song.id}, ${user.id}, ${title}, ${artist}, ${album}, ${explicit})
+    ON CONFLICT (song_id) WHERE status = 'pending' DO UPDATE
+      SET title = EXCLUDED.title, artist = EXCLUDED.artist,
+          album = EXCLUDED.album, explicit = EXCLUDED.explicit,
+          requested_by = EXCLUDED.requested_by, created_at = now()
+  `;
+  return c.json({ ok: true }, 201);
 });
 
 // Admin-only edit: fix metadata / apply the explicit tag on ANY song after
@@ -356,12 +510,12 @@ songRoutes.patch("/:id", requireAuth, async (c) => {
   return c.json(toPublicSong(rows[0]!, await getPrimaryArtistId(song.id)));
 });
 
-// Only the uploader may delete.
+// The uploader may delete their own upload; an admin may delete any song.
 songRoutes.delete("/:id", requireAuth, async (c) => {
   const user = c.get("user")!;
   const song = await getSong(c.req.param("id")!);
   if (!song) return c.json({ error: "not_found" }, 404);
-  if (song.uploaded_by !== user.id) {
+  if (song.uploaded_by !== user.id && !isAdmin(user)) {
     return c.json({ error: "forbidden" }, 403);
   }
 
@@ -378,9 +532,107 @@ songRoutes.delete("/:id", requireAuth, async (c) => {
 
 // --- helpers --------------------------------------------------------------
 
-async function getSong(id: string): Promise<Song | undefined> {
-  const rows = await sql<Song[]>`SELECT * FROM songs WHERE id = ${id}`;
-  return rows[0];
+export async function getSong(id: string): Promise<Song | undefined> {
+  // A malformed (non-uuid) id would make Postgres throw; treat as "not found".
+  try {
+    const rows = await sql<Song[]>`SELECT * FROM songs WHERE id = ${id}`;
+    return rows[0];
+  } catch {
+    return undefined;
+  }
+}
+
+// Who may see a given song: anyone for approved songs; the uploader or an
+// admin for pending/rejected ones.
+export function canSee(song: Song, user: User | null): boolean {
+  if (song.status === "approved") return true;
+  if (!user) return false;
+  return song.uploaded_by === user.id || isAdmin(user);
+}
+
+// Pick the bytes to stream: the Opus transcode when present (smaller — better
+// on mobile), else the master; fall back to the master if the Opus vanished.
+async function resolvePlayable(
+  song: Song,
+  preferMaster: boolean,
+): Promise<{ servePath: string; absPath: string; mime: string } | null> {
+  let servePath = preferMaster ? song.file_path : song.stream_path ?? song.file_path;
+  let absPath = resolveMedia(servePath);
+  let info = await stat(absPath).catch(() => null);
+  if (!info && servePath !== song.file_path) {
+    servePath = song.file_path;
+    absPath = resolveMedia(servePath);
+    info = await stat(absPath).catch(() => null);
+  }
+  if (!info) return null;
+
+  const extMime = mimeForAudioPath(servePath);
+  const mime =
+    extMime !== "application/octet-stream"
+      ? extMime
+      : song.mime && song.mime.startsWith("audio/")
+        ? song.mime
+        : extMime;
+  return { servePath, absPath, mime };
+}
+
+export async function serveSongStream(
+  rangeHeader: string | undefined,
+  song: Song,
+): Promise<Response> {
+  const t = await resolvePlayable(song, false);
+  if (!t) return new Response("file_missing", { status: 404 });
+  return serveAudioFile(rangeHeader, {
+    absPath: t.absPath,
+    servePath: t.servePath,
+    mime: t.mime,
+  });
+}
+
+export async function serveSongDownload(
+  rangeHeader: string | undefined,
+  song: Song,
+): Promise<Response> {
+  const t = await resolvePlayable(song, true); // always the original master
+  if (!t) return new Response("file_missing", { status: 404 });
+  const ext = t.servePath.slice(t.servePath.lastIndexOf(".")) || "";
+  const safe = (s: string) => s.replace(/[\/\\:*?"<>|]+/g, " ").trim();
+  return serveAudioFile(rangeHeader, {
+    absPath: t.absPath,
+    servePath: t.servePath,
+    mime: t.mime,
+    attachmentName: `${safe(song.artist)} - ${safe(song.title)}${ext}`,
+  });
+}
+
+function toPublicEditRequest(
+  r: SongEditRequest & {
+    cur_title: string;
+    cur_artist: string;
+    cur_album: string | null;
+    cur_explicit: boolean;
+    requested_by_name: string | null;
+  },
+) {
+  return {
+    id: r.id,
+    songId: r.song_id,
+    current: {
+      title: r.cur_title,
+      artist: r.cur_artist,
+      album: r.cur_album,
+      explicit: r.cur_explicit,
+    },
+    proposed: {
+      title: r.title,
+      artist: r.artist,
+      album: r.album,
+      explicit: r.explicit,
+    },
+    requestedByName: r.requested_by_name,
+    status: r.status,
+    createdAt: r.created_at,
+  };
 }
 
 // A song can be linked to several artists (song_artists is many-to-many);
@@ -411,7 +663,9 @@ function toPublicSong(s: Song, artistId: string | null = null) {
     hasCover: Boolean(s.cover_path),
     coverUrl: s.cover_path ? `/api/songs/${s.id}/cover` : null,
     streamUrl: `/api/songs/${s.id}/stream`,
+    downloadUrl: `/song/${s.id}?download=1`,
     uploadedBy: s.uploaded_by,
+    status: s.status,
     createdAt: s.created_at,
   };
 }

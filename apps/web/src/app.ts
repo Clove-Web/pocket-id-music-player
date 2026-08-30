@@ -4,6 +4,8 @@
 import {
   api,
   type Song,
+  type PendingSong,
+  type SongEditRequest,
   type Playlist,
   type Me,
   type Lyrics,
@@ -37,13 +39,32 @@ initNative(player);
 
 type View =
   | { kind: "library" }
+  | { kind: "liked" }
+  | { kind: "song"; id: string }
   | { kind: "browse" }
   | { kind: "playlist"; id: string }
   | { kind: "artists" }
   | { kind: "artist"; id: string }
   | { kind: "duplicates" }
   | { kind: "linkRequests" }
+  | { kind: "pendingSongs" }
+  | { kind: "editRequests" }
   | { kind: "settings" };
+
+// Admin-only views, and views that need any account, gated in boot()/popstate.
+const ADMIN_VIEWS = new Set<View["kind"]>([
+  "duplicates",
+  "linkRequests",
+  "pendingSongs",
+  "editRequests",
+]);
+const ACCOUNT_VIEWS = new Set<View["kind"]>(["liked", "settings"]);
+
+function allowedView(v: View): View {
+  if (ADMIN_VIEWS.has(v.kind) && !state.me?.isAdmin) return { kind: "library" };
+  if (ACCOUNT_VIEWS.has(v.kind) && !state.me) return { kind: "library" };
+  return v;
+}
 
 // --- URL routing ------------------------------------------------------------
 // Every view maps to a real, hotlinkable path (the server's catch-all route
@@ -54,24 +75,32 @@ type View =
 function viewToPath(view: View): string {
   switch (view.kind) {
     case "library": return "/";
+    case "liked": return "/liked";
+    case "song": return `/song/${view.id}`;
     case "browse": return "/browse";
     case "artists": return "/artists";
     case "artist": return `/artist/${view.id}`;
     case "playlist": return `/playlist/${view.id}`;
     case "duplicates": return "/admin/duplicates";
     case "linkRequests": return "/admin/link-requests";
+    case "pendingSongs": return "/admin/pending";
+    case "editRequests": return "/admin/edit-requests";
     case "settings": return "/settings";
   }
 }
 
 function pathToView(pathname: string): View {
   const [head, id] = pathname.split("/").filter(Boolean);
+  if (head === "liked") return { kind: "liked" };
+  if (head === "song" && id) return { kind: "song", id };
   if (head === "browse") return { kind: "browse" };
   if (head === "artists") return { kind: "artists" };
   if (head === "artist" && id) return { kind: "artist", id };
   if (head === "playlist" && id) return { kind: "playlist", id };
   if (head === "admin" && id === "duplicates") return { kind: "duplicates" };
   if (head === "admin" && id === "link-requests") return { kind: "linkRequests" };
+  if (head === "admin" && id === "pending") return { kind: "pendingSongs" };
+  if (head === "admin" && id === "edit-requests") return { kind: "editRequests" };
   if (head === "settings") return { kind: "settings" };
   return { kind: "library" };
 }
@@ -90,9 +119,11 @@ const state = {
   me: null as Me | null,
   songs: [] as Song[],
   playlists: [] as Playlist[],
+  likedSongs: [] as Song[],
+  likedIds: new Set<string>(),
   view: { kind: "library" } as View,
   visibleSongs: [] as Song[],
-  adminCounts: { duplicates: 0, linkRequests: 0 },
+  adminCounts: { duplicates: 0, linkRequests: 0, pendingSongs: 0, editRequests: 0 },
 };
 
 // Discord presence is refreshed whenever the *song* or the *play/pause* state
@@ -253,17 +284,13 @@ document.addEventListener("keydown", (e) => {
 // --- boot -----------------------------------------------------------------
 
 async function boot(): Promise<void> {
+  // Streaming/browsing is open to everyone: a null `me` is a valid anonymous
+  // session, not a reason to show a login wall.
   state.me = await api.me();
-  if (!state.me) {
-    renderLogin();
-    return;
-  }
-  await Promise.all([loadSongs(), loadPlaylists()]);
-  if (state.me.isAdmin) await refreshAdminCounts();
+  await Promise.all([loadSongs(), loadPlaylists(), loadLiked()]);
+  if (state.me?.isAdmin) await refreshAdminCounts();
 
-  const initialView = pathToView(window.location.pathname);
-  const adminOnly = initialView.kind === "duplicates" || initialView.kind === "linkRequests";
-  state.view = adminOnly && !state.me.isAdmin ? { kind: "library" } : initialView;
+  state.view = allowedView(pathToView(window.location.pathname));
 
   restoreNowPlaying();
   handleLastfmRedirect();
@@ -273,13 +300,7 @@ async function boot(): Promise<void> {
 // Back/forward: the URL is already correct, so just re-derive the view from
 // it and render — no history.pushState (that would double up entries).
 window.addEventListener("popstate", () => {
-  if (!state.me) {
-    renderLogin();
-    return;
-  }
-  const view = pathToView(window.location.pathname);
-  const adminOnly = view.kind === "duplicates" || view.kind === "linkRequests";
-  state.view = adminOnly && !state.me.isAdmin ? { kind: "library" } : view;
+  state.view = allowedView(pathToView(window.location.pathname));
   render();
 });
 
@@ -303,16 +324,37 @@ async function loadSongs(): Promise<void> {
 }
 
 async function loadPlaylists(): Promise<void> {
+  if (!state.me) {
+    state.playlists = [];
+    return;
+  }
   state.playlists = await api.listPlaylists();
+}
+
+async function loadLiked(): Promise<void> {
+  if (!state.me) {
+    state.likedSongs = [];
+    state.likedIds = new Set();
+    return;
+  }
+  state.likedSongs = await api.listLiked();
+  state.likedIds = new Set(state.likedSongs.map((s) => s.id));
 }
 
 async function refreshAdminCounts(): Promise<void> {
   if (!state.me?.isAdmin) return;
-  const [dupes, reqs] = await Promise.all([
+  const [dupes, reqs, pending, edits] = await Promise.all([
     api.listDuplicates("pending"),
     api.listLinkRequests("pending"),
+    api.listPendingSongs(),
+    api.listSongEditRequests("pending"),
   ]);
-  state.adminCounts = { duplicates: dupes.length, linkRequests: reqs.length };
+  state.adminCounts = {
+    duplicates: dupes.length,
+    linkRequests: reqs.length,
+    pendingSongs: pending.length,
+    editRequests: edits.length,
+  };
 }
 
 // --- top-level render ------------------------------------------------------
@@ -320,6 +362,7 @@ async function refreshAdminCounts(): Promise<void> {
 function render(): void {
   root.innerHTML = `
     <button class="hamburger" id="hamburger" aria-label="Menu"><i class="bi bi-list"></i></button>
+    <img class="app-logo-corner" src="/favicon.png" alt="Doughmination Music" />
     <div class="layout">
       <aside class="sidebar" id="sidebar"></aside>
       <div class="scrim" id="scrim"></div>
@@ -347,43 +390,39 @@ function render(): void {
     .forEach((b) => b.addEventListener("click", closeDrawer));
 }
 
-function renderLogin(): void {
-  // Web navigates the same tab straight to the login route (cookie flow).
-  // Desktop can't: SSO/passkeys don't work in the embedded webview and the
-  // cookie would land in the wrong jar. Instead it opens the system browser
-  // and comes back via the doughmination:// deeplink (see startDesktopLogin).
-  // Web-only: carry the deep link the user landed on (or was bounced to
-  // from an expired session) through the SSO round trip, so e.g. a shared
-  // /artist/<id> link still opens that page after signing in, instead of
-  // always dropping back to the library. Server validates this is a
-  // same-origin path before honoring it — see routes/auth.ts.
+// Web navigates the same tab straight to the login route (cookie flow).
+// Desktop can't: SSO/passkeys don't work in the embedded webview and the cookie
+// would land in the wrong jar — it opens the system browser and returns via the
+// doughmination:// deeplink (see startDesktopLogin). Web carries the deep link
+// the user is on through the SSO round trip so a shared /song/<id> etc. still
+// opens after signing in. Server validates it's a same-origin path — see
+// routes/auth.ts.
+function loginHref(): string {
   const returnPath = window.location.pathname + window.location.search;
-  const loginHref =
+  return (
     "/api/auth/login" +
     (returnPath && returnPath !== "/"
       ? `?redirect=${encodeURIComponent(returnPath)}`
-      : "");
+      : "")
+  );
+}
 
-  const button = isDesktop
-    ? `<button class="btn btn-primary" id="login-btn">🔑 Sign in with SSO</button>`
-    : `<a class="btn btn-primary" href="${loginHref}">🔑 Sign in with SSO</a>`;
+// A "Sign in" control that does the right thing on web vs desktop. `id` must be
+// unique in the document; call wireSignIn(id) after inserting it.
+function signInControlHtml(id: string, label = "Sign in", cls = "btn btn-primary"): string {
+  return isDesktop
+    ? `<button class="${cls}" id="${id}">${label}</button>`
+    : `<a class="${cls}" id="${id}" href="${loginHref()}">${label}</a>`;
+}
 
-  root.innerHTML = `
-    <div class="login">
-      <h1>Music</h1>
-      <p>Sign in with your passkey to continue.</p>
-      ${button}
-    </div>
-  `;
-
-  if (isDesktop) {
-    document.getElementById("login-btn")?.addEventListener("click", () => {
-      startDesktopLogin().catch((err) => {
-        console.error("failed to start login", err);
-        flash("Couldn't open the sign-in page. Try again?");
-      });
+function wireSignIn(id: string): void {
+  if (!isDesktop) return;
+  document.getElementById(id)?.addEventListener("click", () => {
+    startDesktopLogin().catch((err) => {
+      console.error("failed to start login", err);
+      flash("Couldn't open the sign-in page. Try again?");
     });
-  }
+  });
 }
 
 // --- sidebar --------------------------------------------------------------
@@ -414,48 +453,57 @@ function renderSidebar(): void {
     )
     .join("");
 
+  const badge = (n: number) => (n ? ` <span class="pl-badge">${n}</span>` : "");
+  const adminNav = (kind: View["kind"], label: string, n: number) => `
+    <button class="nav-link ${state.view.kind === kind ? "active" : ""}" data-view="${kind}">
+      ${label}${badge(n)}
+    </button>`;
+
   el.innerHTML = `
-    <div class="brand">Doughmination Music</div>
+    <div class="brand"><img class="brand-logo" src="/favicon.png" alt="" /> Doughmination Music</div>
     ${nav("library", "Library")}
-    <button class="nav-link" id="upload-btn">
-      <i class="bi bi-cloud-arrow-up"></i> Upload
-    </button>
+    ${state.me ? nav("liked", `<i class="bi bi-heart-fill"></i> Liked Songs`) : ""}
+    ${
+      state.me
+        ? `<button class="nav-link" id="upload-btn"><i class="bi bi-cloud-arrow-up"></i> Upload</button>`
+        : ""
+    }
     ${nav("browse", "Browse shared")}
     ${nav("artists", "Artists")}
     ${
       state.me?.isAdmin
         ? `
       <div class="section-head"><span>Admin</span></div>
-      <button class="nav-link ${state.view.kind === "duplicates" ? "active" : ""}" data-view="duplicates">
-        Duplicates${
-          state.adminCounts.duplicates
-            ? ` <span class="pl-badge">${state.adminCounts.duplicates}</span>`
-            : ""
-        }
-      </button>
-      <button class="nav-link ${state.view.kind === "linkRequests" ? "active" : ""}" data-view="linkRequests">
-        Artist requests${
-          state.adminCounts.linkRequests
-            ? ` <span class="pl-badge">${state.adminCounts.linkRequests}</span>`
-            : ""
-        }
-      </button>`
+      ${adminNav("duplicates", "Duplicates", state.adminCounts.duplicates)}
+      ${adminNav("linkRequests", "Artist requests", state.adminCounts.linkRequests)}
+      ${adminNav("pendingSongs", "Upload approvals", state.adminCounts.pendingSongs)}
+      ${adminNav("editRequests", "Edit requests", state.adminCounts.editRequests)}`
         : ""
     }
 
+    ${
+      state.me
+        ? `
     <div class="section-head">
       <span>Playlists</span>
       <button class="icon-btn" id="new-playlist" title="New playlist"><i class="bi bi-plus-lg"></i></button>
     </div>
-    <ul class="playlists">${items}</ul>
+    <ul class="playlists">${items}</ul>`
+        : ""
+    }
 
     <div class="sidebar-foot">
-      ${avatarHtml(state.me?.avatarUrl ?? null, state.me?.name ?? null, "sm")}
-      <span class="me-name">${escapeHtml(
-        state.me?.name ?? state.me?.email ?? "You",
-      )}</span>
-      <button class="icon-btn" data-view="settings" title="Settings"><i class="bi bi-gear"></i></button>
-      <button class="link" id="logout">Log out</button>
+      ${
+        state.me
+          ? `
+        ${avatarHtml(state.me.avatarUrl ?? null, state.me.name ?? null, "sm")}
+        <span class="me-name">${escapeHtml(state.me.name ?? state.me.email ?? "You")}</span>
+        <button class="icon-btn" data-view="settings" title="Settings"><i class="bi bi-gear"></i></button>
+        <button class="link" id="logout">Log out</button>`
+          : `
+        <span class="me-name">Browsing as guest</span>
+        ${signInControlHtml("sidebar-signin", "Sign in", "btn btn-primary btn-sm")}`
+      }
     </div>
   `;
 
@@ -463,16 +511,20 @@ function renderSidebar(): void {
     btn.addEventListener("click", () => {
       const kind = (btn as HTMLElement).dataset.view as
         | "library"
+        | "liked"
         | "browse"
         | "artists"
         | "duplicates"
         | "linkRequests"
+        | "pendingSongs"
+        | "editRequests"
         | "settings";
       navigate({ kind });
     });
   });
 
   document.getElementById("upload-btn")?.addEventListener("click", openUploadModal);
+  wireSignIn("sidebar-signin");
 
   el.querySelectorAll("[data-playlist]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -486,10 +538,11 @@ function renderSidebar(): void {
     const res = await api.logout();
     const data = (await res.json()) as { endSession: string | null };
     if (isDesktop) {
-      // No cookie / no navigation: drop the stored token and show login.
+      // No cookie / no navigation: drop the token and drop back to guest view.
       clearDesktopToken();
       state.me = null;
-      renderLogin();
+      await Promise.all([loadSongs(), loadPlaylists(), loadLiked()]);
+      navigate({ kind: "library" });
       return;
     }
     window.location.href = data.endSession ?? "/";
@@ -504,13 +557,91 @@ async function renderMain(): Promise<void> {
 
   const view = state.view;
   if (view.kind === "library") renderLibrary(el);
+  else if (view.kind === "liked") renderLikedView(el);
+  else if (view.kind === "song") await renderSongView(el, view.id);
   else if (view.kind === "browse") await renderBrowse(el);
   else if (view.kind === "artists") await renderArtists(el);
   else if (view.kind === "artist") await renderArtistView(el, view.id);
   else if (view.kind === "duplicates") await renderDuplicates(el);
   else if (view.kind === "linkRequests") await renderLinkRequests(el);
+  else if (view.kind === "pendingSongs") await renderPendingSongs(el);
+  else if (view.kind === "editRequests") await renderEditRequests(el);
   else if (view.kind === "settings") await renderSettings(el);
   else await renderPlaylistView(el, view.id);
+}
+
+function renderLikedView(el: HTMLElement): void {
+  const shown = filterExplicit(state.likedSongs);
+  state.visibleSongs = shown;
+  el.innerHTML = `
+    <header class="main-head">
+      <h2><i class="bi bi-heart-fill accent"></i> Liked Songs</h2>
+      <span class="song-dur">${shown.length} song${shown.length === 1 ? "" : "s"}</span>
+    </header>
+    <div id="songlist">${
+      shown.length
+        ? songTableHtml(shown)
+        : `<p class="empty">Songs you like show up here. Tap the heart on any track.</p>`
+    }</div>
+  `;
+  wireSongList();
+}
+
+async function renderSongView(el: HTMLElement, id: string): Promise<void> {
+  el.innerHTML = `<p class="empty">Loading…</p>`;
+  let song: Song;
+  try {
+    song = await api.getSong(id);
+  } catch {
+    el.innerHTML = `<p class="empty">That song isn't here anymore.</p>`;
+    return;
+  }
+  state.visibleSongs = [song];
+
+  const cover = song.coverUrl
+    ? `<img class="song-page-cover" src="${song.coverUrl}" alt="" />`
+    : `<div class="song-page-cover cover-empty"><i class="bi bi-music-note-beamed"></i></div>`;
+  const artist = song.artistId
+    ? `<button class="song-artist artist-link" id="song-page-artist">${escapeHtml(song.artist)}</button>`
+    : `<span class="song-artist">${escapeHtml(song.artist)}</span>`;
+  const bits = [
+    song.album ? escapeHtml(song.album) : "",
+    song.durationS ? formatTime(song.durationS) : "",
+  ].filter(Boolean).join(" · ");
+
+  el.innerHTML = `
+    <div class="song-page">
+      ${cover}
+      <div class="song-page-meta">
+        <span class="song-title">${escapeHtml(song.title)}${
+          song.explicit ? ` <span class="tag-e" title="Explicit">E</span>` : ""
+        }</span>
+        ${artist}
+        ${bits ? `<span class="song-dur">${bits}</span>` : ""}
+        <div class="song-page-actions">
+          <button class="btn btn-primary" id="song-page-play"><i class="bi bi-play-fill"></i> Play</button>
+          ${state.me ? `<button class="btn" id="song-page-like"><i class="bi bi-heart${
+            state.likedIds.has(song.id) ? "-fill" : ""
+          }"></i> ${state.likedIds.has(song.id) ? "Liked" : "Like"}</button>` : ""}
+          <button class="btn" id="song-page-copy"><i class="bi bi-link-45deg"></i> Copy link</button>
+          <a class="btn" href="/song/${song.id}?download=1"><i class="bi bi-download"></i> Download</a>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("song-page-play")?.addEventListener("click", () => {
+    if (player.current?.id === song.id) player.toggle();
+    else player.playQueue([song], 0);
+  });
+  document.getElementById("song-page-copy")?.addEventListener("click", () => copySongLink(song.id));
+  document.getElementById("song-page-like")?.addEventListener("click", () => {
+    void toggleLike(song.id);
+    renderMain();
+  });
+  document.getElementById("song-page-artist")?.addEventListener("click", () => {
+    if (song.artistId) openArtist(song.artistId);
+  });
 }
 
 function renderLibrary(el: HTMLElement): void {
@@ -897,17 +1028,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Admin-only: fix metadata / apply the explicit tag on any song.
+// Admins fix metadata directly; everyone else signed in submits it as a
+// request an admin approves (mirrors the artist-link request flow).
 function openEditModal(song: Song): void {
+  const asRequest = !state.me?.isAdmin;
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>Edit details</h2>
+        <h2>${asRequest ? "Suggest an edit" : "Edit details"}</h2>
         <button class="icon-btn" id="modal-close" title="Close"><i class="bi bi-x-lg"></i></button>
       </div>
       <form id="edit" class="upload-card">
+        ${
+          asRequest
+            ? `<p class="dz-hint">Your changes go to an admin for review before they go live.</p>`
+            : ""
+        }
         <label class="field">
           <span>Song name <em>(required)</em></span>
           <input name="title" value="${escapeHtml(song.title)}" required />
@@ -924,15 +1062,19 @@ function openEditModal(song: Song): void {
           <input type="checkbox" name="explicit" value="true" ${song.explicit ? "checked" : ""} />
           <span>Explicit content</span>
         </label>
-        <div class="field">
+        ${
+          asRequest
+            ? ""
+            : `<div class="field">
           <span>Replace cover <em>(optional)</em></span>
           <label class="file-chip">
             <i class="bi bi-image"></i>
             <span id="cover-name">Choose image</span>
             <input type="file" name="cover" accept="image/*" hidden />
           </label>
-        </div>
-        <button class="btn btn-primary" type="submit">Save</button>
+        </div>`
+        }
+        <button class="btn btn-primary" type="submit">${asRequest ? "Send for review" : "Save"}</button>
         <span id="edit-status" class="upload-status"></span>
       </form>
     </div>
@@ -952,10 +1094,10 @@ function openEditModal(song: Song): void {
   });
   overlay.querySelector("#modal-close")?.addEventListener("click", close);
 
-  const coverInput = overlay.querySelector('input[name="cover"]') as HTMLInputElement;
-  const coverName = overlay.querySelector("#cover-name") as HTMLElement;
-  coverInput.addEventListener("change", () => {
-    coverName.textContent = coverInput.files?.[0]?.name ?? "Choose image";
+  const coverInput = overlay.querySelector('input[name="cover"]') as HTMLInputElement | null;
+  const coverName = overlay.querySelector("#cover-name") as HTMLElement | null;
+  coverInput?.addEventListener("change", () => {
+    if (coverName) coverName.textContent = coverInput.files?.[0]?.name ?? "Choose image";
   });
 
   // Ensure explicit is always sent (unchecked box would otherwise be omitted).
@@ -964,20 +1106,31 @@ function openEditModal(song: Song): void {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = form.querySelector("button")!;
-    btn.textContent = "Saving...";
+    const explicit = Boolean(form.querySelector<HTMLInputElement>('[name="explicit"]')?.checked);
+    const title = (form.querySelector('[name="title"]') as HTMLInputElement).value.trim();
+    const artist = (form.querySelector('[name="artist"]') as HTMLInputElement).value.trim();
+    const album = (form.querySelector('[name="album"]') as HTMLInputElement).value.trim();
+    btn.textContent = asRequest ? "Sending..." : "Saving...";
     btn.setAttribute("disabled", "true");
     if (status) status.textContent = "";
-    const fd = new FormData(form);
-    fd.set("explicit", form.querySelector<HTMLInputElement>('[name="explicit"]')?.checked ? "true" : "false");
     try {
-      const updated = await api.updateSong(song.id, fd);
-      await loadSongs();
-      renderMain();
-      close();
-      flash(`Updated "${updated.title}".`);
+      if (asRequest) {
+        const res = await api.requestSongEdit(song.id, { title, artist, album, explicit });
+        if (!res.ok) throw new Error(String(res.status));
+        close();
+        flash("Edit sent for review.");
+      } else {
+        const fd = new FormData(form);
+        fd.set("explicit", explicit ? "true" : "false");
+        const updated = await api.updateSong(song.id, fd);
+        await Promise.all([loadSongs(), loadLiked()]);
+        renderMain();
+        close();
+        flash(`Updated "${updated.title}".`);
+      }
     } catch (err) {
-      if (status) status.textContent = `Save failed: ${(err as Error).message}`;
-      btn.textContent = "Save";
+      if (status) status.textContent = `${asRequest ? "Send" : "Save"} failed: ${(err as Error).message}`;
+      btn.textContent = asRequest ? "Send for review" : "Save";
       btn.removeAttribute("disabled");
     }
   });
@@ -990,6 +1143,144 @@ function flash(msg: string): void {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3000);
+}
+
+// --- shared song actions ------------------------------------------------
+
+// The public, hotlinkable URL for a song. Opening it cold hits the server's
+// /song/:id route (unfurl metadata), which then boots the SPA into the song
+// view; appending ?download=1 downloads the original master. See server.ts.
+function songLink(id: string): string {
+  return `${location.origin}/song/${id}`;
+}
+
+function copySongLink(id: string): void {
+  const link = songLink(id);
+  const done = () => flash("Link copied");
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(link).then(done, () => fallbackCopy(link, done));
+  } else {
+    fallbackCopy(link, done);
+  }
+}
+
+function fallbackCopy(text: string, done: () => void): void {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    done();
+  } catch {
+    flash("Couldn't copy — here's the link: " + text);
+  }
+  ta.remove();
+}
+
+// Optimistic like toggle: flip local state + every heart button for this song
+// in the DOM, then persist. Reverts on failure.
+async function toggleLike(songId: string): Promise<void> {
+  if (!state.me) {
+    flash("Sign in to like songs.");
+    return;
+  }
+  const nowLiked = !state.likedIds.has(songId);
+  if (nowLiked) state.likedIds.add(songId);
+  else state.likedIds.delete(songId);
+  paintLikeButtons(songId, nowLiked);
+
+  const song = state.songs.find((s) => s.id === songId) ?? state.likedSongs.find((s) => s.id === songId);
+  if (nowLiked && song && !state.likedSongs.some((s) => s.id === songId)) {
+    state.likedSongs = [song, ...state.likedSongs];
+  } else if (!nowLiked) {
+    state.likedSongs = state.likedSongs.filter((s) => s.id !== songId);
+  }
+
+  try {
+    const res = nowLiked ? await api.likeSong(songId) : await api.unlikeSong(songId);
+    if (!res.ok) throw new Error(String(res.status));
+  } catch {
+    // Revert.
+    if (nowLiked) state.likedIds.delete(songId);
+    else state.likedIds.add(songId);
+    paintLikeButtons(songId, !nowLiked);
+    await loadLiked();
+    flash("Couldn't update Liked Songs.");
+  }
+  if (state.view.kind === "liked") renderMain();
+}
+
+function paintLikeButtons(songId: string, liked: boolean): void {
+  document.querySelectorAll<HTMLElement>(`[data-like="${CSS.escape(songId)}"]`).forEach((btn) => {
+    btn.classList.toggle("liked", liked);
+    btn.setAttribute("title", liked ? "Remove from Liked Songs" : "Add to Liked Songs");
+    const i = btn.querySelector("i");
+    if (i) i.className = liked ? "bi bi-heart-fill" : "bi bi-heart";
+  });
+}
+
+type MenuItem = {
+  label: string;
+  icon: string;
+  danger?: boolean;
+  onClick: () => void;
+};
+
+// Lightweight popup menu anchored to a button. Closes on outside click, Escape,
+// scroll, or resize. There's no menu primitive in the app otherwise — the "⋯"
+// on every song row and the player bar both use this.
+function openContextMenu(anchor: HTMLElement, items: MenuItem[]): void {
+  document.querySelector(".ctx-menu")?.remove();
+
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.innerHTML = items
+    .map(
+      (it, i) =>
+        `<button class="ctx-item ${it.danger ? "danger" : ""}" data-i="${i}">
+          <i class="bi ${it.icon}"></i> ${escapeHtml(it.label)}
+        </button>`,
+    )
+    .join("");
+  document.body.appendChild(menu);
+
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  let top = r.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+
+  const close = () => {
+    menu.remove();
+    document.removeEventListener("pointerdown", onOutside, true);
+    document.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("scroll", close, true);
+    window.removeEventListener("resize", close);
+  };
+  const onOutside = (e: Event) => {
+    if (!menu.contains(e.target as Node)) close();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") close();
+  };
+  document.addEventListener("pointerdown", onOutside, true);
+  document.addEventListener("keydown", onKey, true);
+  window.addEventListener("scroll", close, true);
+  window.addEventListener("resize", close);
+
+  menu.querySelectorAll<HTMLElement>(".ctx-item").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const it = items[Number(btn.dataset.i)];
+      close();
+      it?.onClick();
+    });
+  });
 }
 
 // --- browse shared playlists ----------------------------------------------
@@ -1043,7 +1334,7 @@ async function renderArtists(el: HTMLElement): Promise<void> {
       <h2>Artists</h2>
       <div class="head-actions">
         <input id="artist-search" class="search" placeholder="Search artists" />
-        <button class="btn btn-primary" id="new-artist-btn">+ New artist</button>
+        ${state.me ? `<button class="btn btn-primary" id="new-artist-btn">+ New artist</button>` : ""}
       </div>
     </header>
     <div id="artist-results"></div>
@@ -1468,6 +1759,133 @@ function wireLinkRequestActions(): void {
   });
 }
 
+// --- admin: pending uploads -------------------------------------------
+
+async function renderPendingSongs(el: HTMLElement): Promise<void> {
+  const rows = await api.listPendingSongs();
+  state.adminCounts.pendingSongs = rows.length;
+  state.visibleSongs = rows; // so the preview play buttons queue correctly
+
+  el.innerHTML = `
+    <header class="main-head"><h2>Upload approvals</h2></header>
+    <div id="pending-list">${
+      rows.length
+        ? `<div class="songs">${rows.map(pendingRowHtml).join("")}</div>`
+        : `<p class="empty">No uploads waiting for review.</p>`
+    }</div>
+  `;
+
+  // Reuse the song-row play wiring for the cover buttons.
+  el.querySelectorAll(".cover-play").forEach((btn) => {
+    btn.addEventListener("click", () => playFromList(Number((btn as HTMLElement).dataset.play)));
+  });
+  el.querySelectorAll("[data-approve]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api.decidePendingSong((btn as HTMLElement).dataset.approve!, "approve");
+      await Promise.all([refreshAdminCounts(), loadSongs()]);
+      renderSidebar();
+      renderMain();
+    });
+  });
+  el.querySelectorAll("[data-reject]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Reject and delete this upload?")) return;
+      await api.decidePendingSong((btn as HTMLElement).dataset.reject!, "reject");
+      await refreshAdminCounts();
+      renderSidebar();
+      renderMain();
+    });
+  });
+  highlightPlayingRow();
+}
+
+function pendingRowHtml(s: PendingSong, i: number): string {
+  const art = s.coverUrl
+    ? `<img class="cover" src="${s.coverUrl}" alt="" />`
+    : `<div class="cover cover-empty"><i class="bi bi-music-note-beamed"></i></div>`;
+  return `
+    <div class="song" data-index="${i}" data-song-id="${s.id}">
+      <div class="song-cover">
+        ${art}
+        <div class="np-bars" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <button class="cover-play" data-play="${i}" title="Preview"><i class="bi bi-play-fill"></i></button>
+      </div>
+      <div class="song-meta">
+        <span class="song-title">${escapeHtml(s.title)}${
+          s.explicit ? ` <span class="tag-e" title="Explicit">E</span>` : ""
+        }</span>
+        <span class="song-artist">${escapeHtml(s.artist)}${
+          s.album ? ` · ${escapeHtml(s.album)}` : ""
+        }${s.uploaderName ? ` · uploaded by ${escapeHtml(s.uploaderName)}` : ""}</span>
+      </div>
+      <span class="song-dur">${s.durationS ? formatTime(s.durationS) : ""}</span>
+      <div class="dupe-actions">
+        <button class="btn" data-reject="${s.id}">Reject</button>
+        <button class="btn btn-primary" data-approve="${s.id}">Approve</button>
+      </div>
+    </div>`;
+}
+
+// --- admin: song metadata edit requests -------------------------------
+
+async function renderEditRequests(el: HTMLElement): Promise<void> {
+  const rows = await api.listSongEditRequests("pending");
+  state.adminCounts.editRequests = rows.length;
+
+  el.innerHTML = `
+    <header class="main-head"><h2>Edit requests</h2></header>
+    <div id="edit-req-list">${
+      rows.length
+        ? rows.map(editReqRowHtml).join("")
+        : `<p class="empty">No pending edit requests.</p>`
+    }</div>
+  `;
+
+  el.querySelectorAll("[data-approve]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api.decideSongEditRequest((btn as HTMLElement).dataset.approve!, "approve");
+      await Promise.all([refreshAdminCounts(), loadSongs()]);
+      renderSidebar();
+      renderMain();
+    });
+  });
+  el.querySelectorAll("[data-reject]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api.decideSongEditRequest((btn as HTMLElement).dataset.reject!, "reject");
+      await refreshAdminCounts();
+      renderSidebar();
+      renderMain();
+    });
+  });
+}
+
+function editReqRowHtml(r: SongEditRequest): string {
+  const field = (label: string, cur: unknown, next: unknown) => {
+    const changed = next !== null && next !== undefined && String(next) !== String(cur);
+    return `<li${changed ? ' class="changed"' : ""}>
+      <span class="er-label">${label}</span>
+      <span class="er-cur">${escapeHtml(String(cur ?? "—"))}</span>
+      ${changed ? `<i class="bi bi-arrow-right"></i> <span class="er-next">${escapeHtml(String(next))}</span>` : ""}
+    </li>`;
+  };
+  return `
+    <div class="dupe-row" data-req="${r.id}">
+      <div class="dupe-score">Edit request${
+        r.requestedByName ? ` · ${escapeHtml(r.requestedByName)}` : ""
+      }</div>
+      <ul class="er-fields">
+        ${field("Title", r.current.title, r.proposed.title)}
+        ${field("Artist", r.current.artist, r.proposed.artist)}
+        ${field("Album", r.current.album, r.proposed.album)}
+        ${field("Explicit", r.current.explicit, r.proposed.explicit)}
+      </ul>
+      <div class="dupe-actions">
+        <button class="btn" data-reject="${r.id}">Reject</button>
+        <button class="btn btn-primary" data-approve="${r.id}">Approve</button>
+      </div>
+    </div>`;
+}
+
 // --- playlist view ---------------------------------------------------------
 
 async function renderPlaylistView(el: HTMLElement, id: string): Promise<void> {
@@ -1610,22 +2028,25 @@ function songTableHtml(songs: Song[], editablePlaylistId?: string): string {
           </button>
         </div>`;
 
-      const action = editablePlaylistId
-        ? `<button class="icon-btn" data-remove="${s.id}" title="Remove"><i class="bi bi-x-lg"></i></button>`
-        : `<button class="icon-btn" data-add="${s.id}" title="Add to playlist"><i class="bi bi-plus-lg"></i></button>`;
-
-      const linkArtist = `<button class="icon-btn" data-link-artist="${s.id}" title="Link artist"><i class="bi bi-person-plus"></i></button>`;
-
-      const edit = state.me?.isAdmin
-        ? `<button class="icon-btn" data-edit="${s.id}" title="Edit details"><i class="bi bi-pencil-fill"></i></button>`
+      // Only the heart and the +/× stay on the row; everything else moves into
+      // the "⋯" menu wired up in wireSongList().
+      const heart = state.me
+        ? `<button class="icon-btn like ${state.likedIds.has(s.id) ? "liked" : ""}" data-like="${s.id}"
+             title="${state.likedIds.has(s.id) ? "Remove from Liked Songs" : "Add to Liked Songs"}">
+             <i class="bi bi-heart${state.likedIds.has(s.id) ? "-fill" : ""}"></i></button>`
         : "";
-      const del =
-        s.uploadedBy && s.uploadedBy === state.me?.id
-          ? `<button class="icon-btn" data-del="${s.id}" title="Delete song"><i class="bi bi-trash-fill"></i></button>`
-          : "";
+      const plus = !state.me
+        ? ""
+        : editablePlaylistId
+          ? `<button class="icon-btn" data-remove="${s.id}" title="Remove"><i class="bi bi-x-lg"></i></button>`
+          : `<button class="icon-btn" data-add="${s.id}" title="Add to playlist"><i class="bi bi-plus-lg"></i></button>`;
+      const menu = `<button class="icon-btn" data-menu="${s.id}" title="More"><i class="bi bi-three-dots-vertical"></i></button>`;
 
       const badge = s.explicit
         ? `<span class="tag-e" title="Explicit">E</span>`
+        : "";
+      const pending = s.status === "pending"
+        ? `<span class="tag-pending" title="Waiting for admin approval">pending</span>`
         : "";
 
       const artist = s.artistId
@@ -1636,11 +2057,11 @@ function songTableHtml(songs: Song[], editablePlaylistId?: string): string {
         <div class="song" data-index="${i}" data-song-id="${s.id}">
           ${cover}
           <div class="song-meta">
-            <span class="song-title">${escapeHtml(s.title)}${badge}</span>
+            <span class="song-title">${escapeHtml(s.title)}${badge}${pending}</span>
             ${artist}
           </div>
           <span class="song-dur">${s.durationS ? formatTime(s.durationS) : ""}</span>
-          <div class="song-actions">${action}${linkArtist}${edit}${del}</div>
+          <div class="song-actions">${heart}${plus}${menu}</div>
         </div>`;
     })
     .join("");
@@ -1690,36 +2111,75 @@ function wireSongList(editablePlaylistId?: string): void {
     });
   });
 
-  document.querySelectorAll("[data-edit]").forEach((btn) => {
+  document.querySelectorAll("[data-like]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const id = (btn as HTMLElement).dataset.edit!;
+      void toggleLike((btn as HTMLElement).dataset.like!);
+    });
+  });
+
+  document.querySelectorAll("[data-menu]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = (btn as HTMLElement).dataset.menu!;
       const song = state.visibleSongs.find((s) => s.id === id);
-      if (song) openEditModal(song);
-    });
-  });
-
-  document.querySelectorAll("[data-link-artist]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const songId = (btn as HTMLElement).dataset.linkArtist!;
-      const song = state.visibleSongs.find((s) => s.id === songId);
-      openLinkArtistModal(songId, song?.title ?? "");
-    });
-  });
-
-  document.querySelectorAll("[data-del]").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!confirm("Delete this song for everyone?")) return;
-      await api.deleteSong((btn as HTMLElement).dataset.del!);
-      await loadSongs();
-      renderMain();
+      if (song) openContextMenu(btn as HTMLElement, songMenuItems(song));
     });
   });
 
   // Reflect the current track on the freshly-rendered list.
   highlightPlayingRow();
+}
+
+// The "⋯" menu for one song row: link + download for everyone; the account-only
+// bits (link artist, edit/suggest edit, delete) appear per role.
+function songMenuItems(song: Song): MenuItem[] {
+  const items: MenuItem[] = [];
+  if (song.artistId) {
+    items.push({
+      label: "Go to artist",
+      icon: "bi-person",
+      onClick: () => openArtist(song.artistId!),
+    });
+  }
+  items.push({ label: "Copy song link", icon: "bi-link-45deg", onClick: () => copySongLink(song.id) });
+  items.push({
+    label: "Download original",
+    icon: "bi-download",
+    onClick: () => {
+      window.location.href = `/song/${song.id}?download=1`;
+    },
+  });
+  if (state.me) {
+    items.push({
+      label: "Link artist",
+      icon: "bi-person-plus",
+      onClick: () => openLinkArtistModal(song.id, song.title),
+    });
+    items.push({
+      label: state.me.isAdmin ? "Edit details" : "Suggest an edit",
+      icon: "bi-pencil",
+      onClick: () => openEditModal(song),
+    });
+  }
+  const isUploader = Boolean(song.uploadedBy) && song.uploadedBy === state.me?.id;
+  if (isUploader || state.me?.isAdmin) {
+    items.push({
+      label: "Delete song",
+      icon: "bi-trash",
+      danger: true,
+      onClick: async () => {
+        const msg = isUploader
+          ? "Delete this song for everyone?"
+          : `Delete "${song.title}" by ${song.artist} for everyone? This removes the file.`;
+        if (!confirm(msg)) return;
+        await api.deleteSong(song.id);
+        await Promise.all([loadSongs(), loadLiked()]);
+        renderMain();
+      },
+    });
+  }
+  return items;
 }
 
 // Play a song from the visible list — but if it's already the current track,
@@ -1848,6 +2308,17 @@ function mountPlayerBar(el: HTMLElement, song: Song): void {
             : `<span class="song-artist">${escapeHtml(song.artist)}</span>`
         }
       </div>
+      <div class="pb-song-actions">
+        ${
+          state.me
+            ? `<button class="icon-btn like ${state.likedIds.has(song.id) ? "liked" : ""}" id="pb-like"
+                 data-like="${song.id}" title="Like"><i class="bi bi-heart${
+                   state.likedIds.has(song.id) ? "-fill" : ""
+                 }"></i></button>`
+            : ""
+        }
+        <button class="icon-btn" id="pb-menu" title="More"><i class="bi bi-three-dots-vertical"></i></button>
+      </div>
     </div>
 
     <div class="pb-controls">
@@ -1915,6 +2386,23 @@ function mountPlayerBar(el: HTMLElement, song: Song): void {
   if (song.artistId) {
     el.querySelector("#pb-artist")?.addEventListener("click", () => openArtist(song.artistId!));
   }
+
+  el.querySelector("#pb-like")?.addEventListener("click", () => void toggleLike(song.id));
+  el.querySelector("#pb-menu")?.addEventListener("click", (e) => {
+    openContextMenu(e.currentTarget as HTMLElement, [
+      { label: "Copy song link", icon: "bi-link-45deg", onClick: () => copySongLink(song.id) },
+      {
+        label: "Download original",
+        icon: "bi-download",
+        onClick: () => {
+          window.location.href = `/song/${song.id}?download=1`;
+        },
+      },
+      ...(song.artistId
+        ? [{ label: "Go to artist", icon: "bi-person", onClick: () => openArtist(song.artistId!) }]
+        : []),
+    ]);
+  });
 }
 
 // Update only the changing pieces — never rebuild (keeps sliders draggable).
@@ -1949,6 +2437,14 @@ function updatePlayerBar(): void {
   }
 
   el.querySelector("#lyrics-btn")?.classList.toggle("on", lyricsState.open);
+
+  const pbLike = el.querySelector("#pb-like");
+  if (pbLike && player.current) {
+    const liked = state.likedIds.has(player.current.id);
+    pbLike.classList.toggle("liked", liked);
+    const i = pbLike.querySelector("i");
+    if (i) i.className = liked ? "bi bi-heart-fill" : "bi bi-heart";
+  }
 
   updateVolumeIcon();
 }

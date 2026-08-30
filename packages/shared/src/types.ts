@@ -13,6 +13,29 @@ export type Song = {
   coverUrl: string | null;
   streamUrl: string;
   uploadedBy: string | null;
+  // Present on library / liked / single-song responses; omitted from the
+  // trimmed song shape inside playlist + artist detail payloads.
+  downloadUrl?: string;
+  status?: "pending" | "approved" | "rejected";
+};
+
+// A pending upload awaiting admin approval, with who uploaded it.
+export type PendingSong = Song & { uploaderName: string | null };
+
+// A non-admin's proposed metadata fix, awaiting admin approval.
+export type SongEditRequest = {
+  id: string;
+  songId: string;
+  current: { title: string; artist: string; album: string | null; explicit: boolean };
+  proposed: {
+    title: string | null;
+    artist: string | null;
+    album: string | null;
+    explicit: boolean | null;
+  };
+  requestedByName: string | null;
+  status: string;
+  createdAt: string;
 };
 
 export type Playlist = {

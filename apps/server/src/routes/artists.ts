@@ -24,7 +24,9 @@ import { ensureMediaDirs, resolveMedia, saveCover } from "../lib/media.ts";
 
 export const artistRoutes = new Hono<AppEnv>();
 
-artistRoutes.use("*", requireAuth);
+// Browsing artist pages is open to everyone (like the rest of the library);
+// creating pages, editing, merging, and deciding link requests all require an
+// account — `requireAuth` is applied per-route below.
 
 // --- search / browse -------------------------------------------------------
 // Used both for the "Artists" browse page and for the "link song to artist"
@@ -64,7 +66,7 @@ artistRoutes.get("/", async (c) => {
 
 // Pending link requests, for the admin queue. Declared before "/:id" so
 // "link-requests" isn't captured as an artist id.
-artistRoutes.get("/link-requests", async (c) => {
+artistRoutes.get("/link-requests", requireAuth, async (c) => {
   if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
   const status = c.req.query("status") ?? "pending";
 
@@ -110,7 +112,7 @@ artistRoutes.get("/link-requests", async (c) => {
 
 // Merge a near-duplicate artist page into the canonical one. Admin-only
 // cleanup for pages that slipped past the search-before-create check.
-artistRoutes.post("/merge", async (c) => {
+artistRoutes.post("/merge", requireAuth, async (c) => {
   if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
 
   const body = await c.req
@@ -166,11 +168,15 @@ artistRoutes.get("/:id", async (c) => {
   )[0];
   if (!artist) return c.json({ error: "not_found" }, 404);
 
+  const me = c.get("user")?.id ?? null;
+  const visible = me
+    ? sql`(s.status = 'approved' OR s.uploaded_by = ${me})`
+    : sql`s.status = 'approved'`;
   const songs = await sql<Array<Song & { role: string }>>`
     SELECT s.*, sa.role
     FROM song_artists sa
     JOIN songs s ON s.id = sa.song_id
-    WHERE sa.artist_id = ${id}
+    WHERE sa.artist_id = ${id} AND ${visible}
     ORDER BY s.created_at DESC
   `;
 
@@ -210,7 +216,7 @@ artistRoutes.get("/:id/avatar", async (c) => {
 });
 
 // Admin-only, mirroring the rest of "editing an existing page".
-artistRoutes.post("/:id/avatar", async (c) => {
+artistRoutes.post("/:id/avatar", requireAuth, async (c) => {
   if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
   const id = c.req.param("id")!;
   const artist = (await sql<Artist[]>`SELECT * FROM artists WHERE id = ${id}`)[0];
@@ -240,7 +246,7 @@ artistRoutes.post("/:id/avatar", async (c) => {
 // match (409, with the existing page so the UI can offer "link to this
 // instead") — near-duplicate prevention is primarily the caller's job via
 // GET / before showing a "create new" option.
-artistRoutes.post("/", async (c) => {
+artistRoutes.post("/", requireAuth, async (c) => {
   const user = c.get("user")!;
   const body = await c.req
     .json<{ name?: string; bio?: string }>()
@@ -273,7 +279,7 @@ artistRoutes.post("/", async (c) => {
 });
 
 // Edit an existing page. Admin-only.
-artistRoutes.patch("/:id", async (c) => {
+artistRoutes.patch("/:id", requireAuth, async (c) => {
   if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
   const id = c.req.param("id")!;
 
@@ -316,7 +322,7 @@ artistRoutes.patch("/:id", async (c) => {
 
 // Request that a song be linked to this artist. Anyone signed in may ask;
 // an admin decides (see the approve/reject routes below).
-artistRoutes.post("/:id/link-requests", async (c) => {
+artistRoutes.post("/:id/link-requests", requireAuth, async (c) => {
   const user = c.get("user")!;
   const artistId = c.req.param("id")!;
 
@@ -353,7 +359,7 @@ artistRoutes.post("/:id/link-requests", async (c) => {
   return c.json({ ok: true, requestId: rows[0].id }, 201);
 });
 
-artistRoutes.post("/link-requests/:id/approve", async (c) => {
+artistRoutes.post("/link-requests/:id/approve", requireAuth, async (c) => {
   if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
   const user = c.get("user")!;
   const id = c.req.param("id")!;
@@ -381,7 +387,7 @@ artistRoutes.post("/link-requests/:id/approve", async (c) => {
   return c.json({ ok: true });
 });
 
-artistRoutes.post("/link-requests/:id/reject", async (c) => {
+artistRoutes.post("/link-requests/:id/reject", requireAuth, async (c) => {
   if (!isAdmin(c.get("user"))) return c.json({ error: "forbidden" }, 403);
   const user = c.get("user")!;
   const id = c.req.param("id")!;

@@ -4,6 +4,8 @@
 
 import type {
   Song,
+  PendingSong,
+  SongEditRequest,
   Playlist,
   PlaylistDetail,
   PublicPlaylist,
@@ -157,6 +159,10 @@ export const api = {
     return fetch(url(`/api/songs${qs}`)).then(json<Song[]>);
   },
 
+  getSong(id: string): Promise<Song> {
+    return fetch(url(`/api/songs/${id}`)).then(json<Song>);
+  },
+
   uploadSong(form: FormData): Promise<Song> {
     return fetch(url("/api/songs"), { method: "POST", body: form }).then(json<Song>);
   },
@@ -169,6 +175,53 @@ export const api = {
 
   deleteSong(id: string): Promise<Response> {
     return fetch(url(`/api/songs/${id}`), { method: "DELETE" });
+  },
+
+  // --- liked songs -----------------------------------------------------
+
+  listLiked(): Promise<Song[]> {
+    return fetch(url("/api/songs/liked")).then(json<Song[]>);
+  },
+
+  likeSong(id: string): Promise<Response> {
+    return fetch(url(`/api/songs/${id}/like`), { method: "PUT" });
+  },
+
+  unlikeSong(id: string): Promise<Response> {
+    return fetch(url(`/api/songs/${id}/like`), { method: "DELETE" });
+  },
+
+  // --- admin: upload approval ----------------------------------------
+
+  listPendingSongs(): Promise<PendingSong[]> {
+    return fetch(url("/api/songs/pending")).then(json<PendingSong[]>);
+  },
+
+  decidePendingSong(id: string, action: "approve" | "reject"): Promise<Response> {
+    return fetch(url(`/api/songs/${id}/${action}`), { method: "POST" });
+  },
+
+  // --- metadata edit requests --------------------------------------
+
+  requestSongEdit(
+    id: string,
+    patch: { title?: string; artist?: string; album?: string; explicit?: boolean },
+  ): Promise<Response> {
+    return fetch(url(`/api/songs/${id}/edit-requests`), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+  },
+
+  listSongEditRequests(status = "pending"): Promise<SongEditRequest[]> {
+    return fetch(url(`/api/songs/edit-requests?status=${status}`)).then(
+      json<SongEditRequest[]>,
+    );
+  },
+
+  decideSongEditRequest(id: string, action: "approve" | "reject"): Promise<Response> {
+    return fetch(url(`/api/songs/edit-requests/${id}/${action}`), { method: "POST" });
   },
 
   getLyrics(songId: string): Promise<Lyrics> {

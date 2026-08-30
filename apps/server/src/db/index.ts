@@ -36,6 +36,7 @@ export type Song = {
   explicit: boolean;
   normalized_title: string | null;
   uploaded_by: string | null;
+  status: "pending" | "approved" | "rejected";
   created_at: Date;
 };
 
@@ -70,6 +71,20 @@ export type ArtistLinkRequest = {
   artist_id: string;
   role: string;
   requested_by: string | null;
+  status: "pending" | "approved" | "rejected";
+  created_at: Date;
+  decided_at: Date | null;
+  decided_by: string | null;
+};
+
+export type SongEditRequest = {
+  id: string;
+  song_id: string;
+  requested_by: string | null;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  explicit: boolean | null;
   status: "pending" | "approved" | "rejected";
   created_at: Date;
   decided_at: Date | null;

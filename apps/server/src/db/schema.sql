@@ -185,3 +185,55 @@ CREATE INDEX IF NOT EXISTS song_duplicate_reviews_status_idx
 CREATE UNIQUE INDEX IF NOT EXISTS song_duplicate_reviews_pair_uniq
   ON song_duplicate_reviews (new_song_id, existing_song_id)
   WHERE new_song_id IS NOT NULL AND existing_song_id IS NOT NULL;
+
+-- --- Approval gate ----------------------------------------------------------
+--
+-- Streaming/browsing is open to everyone (no account), but uploading and
+-- editing metadata require an account AND admin confirmation. Non-admin
+-- uploads land as 'pending' and stay hidden from the public library until an
+-- admin approves them (the uploader still sees their own). Existing rows and
+-- admin uploads are 'approved'. See routes/songs.ts.
+
+ALTER TABLE songs ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'approved';
+CREATE INDEX IF NOT EXISTS songs_status_idx ON songs (status);
+
+-- --- Liked songs ----------------------------------------------------------
+--
+-- Per-user favourites. The "Liked Songs" section is just this join ordered by
+-- when the like happened. Cascades on both user and song delete.
+
+CREATE TABLE IF NOT EXISTS liked_songs (
+  user_id    uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  song_id    uuid NOT NULL REFERENCES songs (id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, song_id)
+);
+
+CREATE INDEX IF NOT EXISTS liked_songs_user_idx
+  ON liked_songs (user_id, created_at DESC);
+
+-- --- Song metadata edit requests ---------------------------------------
+--
+-- Non-admins can propose a metadata fix; an admin approves or rejects it,
+-- mirroring artist_link_requests above. Admins still edit directly (PATCH).
+-- One open request per song at a time.
+
+CREATE TABLE IF NOT EXISTS song_edit_requests (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  song_id      uuid NOT NULL REFERENCES songs (id) ON DELETE CASCADE,
+  requested_by uuid REFERENCES users (id) ON DELETE SET NULL,
+  title        text,
+  artist       text,
+  album        text,
+  explicit     boolean,
+  status       text NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  decided_at   timestamptz,
+  decided_by   uuid REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS song_edit_requests_status_idx
+  ON song_edit_requests (status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS song_edit_requests_pending_uniq
+  ON song_edit_requests (song_id) WHERE status = 'pending';

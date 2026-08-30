@@ -19,7 +19,12 @@ import {
 import { ensureMediaDirs } from "./lib/media.ts";
 import { startPocketIdGuard } from "./lib/pocketid-guard.ts";
 import { authRoutes } from "./routes/auth.ts";
-import { songRoutes } from "./routes/songs.ts";
+import {
+  songRoutes,
+  getSong,
+  canSee,
+  serveSongDownload,
+} from "./routes/songs.ts";
 import { playlistRoutes } from "./routes/playlists.ts";
 import { artistRoutes } from "./routes/artists.ts";
 import { duplicateRoutes } from "./routes/duplicates.ts";
@@ -131,9 +136,68 @@ app.get("/download", (c) => {
   }
 });
 
+// Shareable per-song link. Must sit before the SPA catch-all.
+//
+//   /song/<id>              -> the SPA, with song-specific unfurl metadata
+//                             injected so Discord/Slack/iMessage previews show
+//                             the track (the SPA then routes to the song view)
+//   /song/<id>?download=1   -> downloads the ORIGINAL uploaded master as a file
+//
+// Open to everyone: streaming and downloading need no account. Pending/rejected
+// uploads are only visible to their uploader or an admin.
+app.get("/song/:id", async (c) => {
+  const song = await getSong(c.req.param("id"));
+
+  if (c.req.query("download") != null && song && canSee(song, c.get("user"))) {
+    return serveSongDownload(c.req.header("range"), song);
+  }
+
+  const file = Bun.file(join(webSrc, "index.html"));
+  if (!(await file.exists())) return new Response("Not found", { status: 404 });
+  let html = await file.text();
+  if (song && canSee(song, c.get("user"))) {
+    html = injectSongMeta(html, song);
+  }
+  return new Response(html, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+  });
+});
+
 // SPA fallback: any non-API route returns index.html. Also no-cache, so a
 // stale shell can't keep pointing the webview at an old asset.
 app.get("*", () => serveFile(join(webSrc, "index.html"), "no-cache"));
+
+// Rewrite the static unfurl tags in index.html for a specific song. Bots don't
+// run JS, so this has to happen server-side; humans still boot the SPA normally.
+function injectSongMeta(
+  html: string,
+  song: { id: string; title: string; artist: string; cover_path: string | null },
+): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const title = esc(`${song.title} — ${song.artist}`);
+  const desc = esc(`Listen to ${song.title} by ${song.artist} on Doughmination Music.`);
+  const url = `${config.appUrl}/song/${song.id}`;
+  const image = song.cover_path
+    ? `${config.appUrl}/api/songs/${song.id}/cover`
+    : `${config.appUrl}/favicon.png`;
+
+  return html
+    .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
+    .replace(
+      /(<meta (?:property|name)="(?:og:title|twitter:title)" content=")[^"]*(")/g,
+      `$1${title}$2`,
+    )
+    .replace(
+      /(<meta (?:property|name)="(?:og:description|twitter:description|description)" content=")[^"]*(")/g,
+      `$1${desc}$2`,
+    )
+    .replace(/(<meta property="og:url" content=")[^"]*(")/g, `$1${url}$2`)
+    .replace(
+      /(<meta (?:property|name)="(?:og:image|twitter:image)" content=")[^"]*(")/g,
+      `$1${image}$2`,
+    );
+}
 
 console.log(`Music server on ${config.appUrl} (port ${config.port})`);
 

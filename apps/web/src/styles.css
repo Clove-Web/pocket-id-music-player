@@ -1378,3 +1378,196 @@ button {
     max-width: 40vw;
   }
 }
+
+/* --- app icon / brand --- */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.brand-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+
+/* Persistent corner mark on mobile, where there's no always-visible sidebar
+   brand. Hidden on desktop — the sidebar brand carries it there. */
+.app-logo-corner {
+  display: none;
+  position: fixed;
+  top: 0.6rem;
+  right: 0.9rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+  z-index: 46;
+}
+
+@media (max-width: 768px) {
+  .app-logo-corner {
+    display: block;
+  }
+}
+
+/* --- heart / like --- */
+
+.icon-btn.like.liked,
+.icon-btn.like.liked:hover {
+  color: var(--accent);
+}
+
+.accent {
+  color: var(--accent);
+}
+
+.tag-pending {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--panel-2);
+  color: var(--muted);
+  padding: 0.05rem 0.3rem;
+  border-radius: 5px;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+/* --- context (⋯) menu --- */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 190px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.3rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 0.5rem 0.6rem;
+  border-radius: 7px;
+  font-size: 0.9rem;
+}
+
+.ctx-item:hover {
+  background: var(--panel-2);
+}
+
+.ctx-item i {
+  color: var(--muted);
+  width: 1rem;
+  text-align: center;
+}
+
+.ctx-item.danger {
+  color: var(--danger);
+}
+
+.ctx-item.danger i {
+  color: var(--danger);
+}
+
+/* --- single song page (/song/:id) --- */
+
+.song-page {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.song-page-cover {
+  width: 200px;
+  height: 200px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.song-page-cover.cover-empty {
+  display: grid;
+  place-items: center;
+  font-size: 2.5rem;
+  color: var(--muted);
+  background: var(--panel-2);
+}
+
+.song-page-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.song-page-meta .song-title {
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.song-page-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+/* --- player bar: heart + ⋯ --- */
+
+.pb-song-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  flex-shrink: 0;
+}
+
+/* --- admin: edit requests --- */
+
+.er-fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.er-fields li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+}
+
+.er-fields li.changed {
+  color: var(--text);
+}
+
+.er-label {
+  width: 4.5rem;
+  flex-shrink: 0;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+}
+
+.er-next {
+  color: var(--accent);
+}
