@@ -3,6 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "description": "Doughmination Music desktop app (Electron shell + Discord Rich Presence)",
+  "author": "Clove Twilight <admin@doughmination.win>",
+  "homepage": "https://github.com/Clove-Web/pocket-id-music-player",
+  "license": "LicenseRef-DASL-1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Clove-Web/pocket-id-music-player.git"
+  },
   "main": "dist/main.js",
   "scripts": {
     "build:main": "tsc -p tsconfig.json",

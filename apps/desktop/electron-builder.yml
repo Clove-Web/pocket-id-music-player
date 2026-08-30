@@ -48,6 +48,6 @@ linux:
     - deb
   category: Audio
   icon: build/icon.png
-  maintainer: Clove Twilight <clovetwilight3@outlook.com>
+  maintainer: Clove Twilight <admin@doughmination.win>
   executableName: doughmination-music
   artifactName: Doughmination.Music_amd64.${ext}
