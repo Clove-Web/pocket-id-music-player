@@ -1,6 +1,6 @@
 {
   "name": "@musicapp/desktop",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "private": true,
   "description": "Doughmination Music desktop app (Electron shell + Discord Rich Presence)",
   "author": "Clove Twilight <admin@doughmination.win>",
