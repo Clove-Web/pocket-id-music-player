@@ -8,15 +8,11 @@
 # will overwrite your change. `pkgrel` is likewise reset to 1 every release;
 # a pkgrel-only bump means bumping it here and re-running the workflow.
 #
-# It repackages the published AppImage rather than building from source:
-# building here would mean fetching the proprietary Discord Social SDK from
-# our own CDN mid-build and compiling the whole Tauri/Rust tree on the user's
-# machine. Note that Arch's naming guidelines would call this a `-bin`
-# package; the unsuffixed name is a deliberate maintainer preference.
-#
-# The AppImage deliberately bundles no system libraries (see the "unbundle the
-# GTK/WebKitGTK stack" step in the release workflow), so this really is just
-# the app binary plus the Discord SDK — `depends` below is the whole runtime.
+# It repackages the published Electron AppImage rather than building from
+# source (Arch's guidelines would call that a `-bin` package; the unsuffixed
+# name is a deliberate maintainer preference). The AppImage bundles its own
+# Chromium/Electron runtime, so `depends` below is just the system libraries
+# Chromium dlopen()s at runtime.
 
 pkgname=doughmination-music
 pkgver=1.0.0
@@ -26,35 +22,23 @@ arch=('x86_64')
 url="https://github.com/Clove-Web/pocket-id-music-player"
 license=('LicenseRef-DASL-1.0')
 depends=(
-  # Linked by the app binary itself.
-  'webkit2gtk-4.1'
   'gtk3'
-  'libsoup3'
-  'glib2'
-  'gdk-pixbuf2'
-  'cairo'
-  'dbus'
-  'gcc-libs'
-  'glibc'
-  # Linked by libdiscord_partner_sdk.so — all DT_NEEDED entries, so the app
-  # fails to start outright if any are missing, not just Rich Presence.
+  'nss'
   'alsa-lib'
-  'libpulse'
-  'libx11'
-  'libatomic'
+  'libnotify'
+  'libxss'
   # Owns the /usr/share/icons/hicolor hierarchy this package drops icons into.
   'hicolor-icon-theme'
-  # Sign-in hands the OIDC flow to the system browser via tauri-plugin-opener,
-  # which shells out to xdg-open.
+  # Sign-in hands the OIDC flow to the system browser (shell.openExternal ->
+  # xdg-open).
   'xdg-utils'
 )
-# Prebuilt upstream binaries: nothing to strip, no debug package to split out.
 options=('!strip' '!debug')
 
-# Tauri names the artifact from `productName` + the version in
-# tauri.conf.json, which is not necessarily the git tag — the workflow
-# overwrites this line with the asset name it actually finds on the release.
-_appimagefile="Doughmination.Music_${pkgver}_amd64.AppImage"
+# electron-builder names this from apps/desktop/electron-builder.yml's
+# `artifactName` (version-less). The workflow overwrites this line with the
+# asset name it actually finds on the release, so a mismatch can't 404.
+_appimagefile="Doughmination.Music_amd64.AppImage"
 
 source=(
   "$pkgname-$pkgver.AppImage::$url/releases/download/v$pkgver/$_appimagefile"
@@ -74,25 +58,28 @@ prepare() {
 package() {
   cd "$srcdir/squashfs-root"
 
-  # The binary finds libdiscord_partner_sdk.so through a `$ORIGIN/../lib`
-  # RUNPATH (see apps/desktop/src-tauri/build.rs), so bin/ and lib/ have to
-  # stay siblings under /opt — hence no plain /usr/bin install.
-  install -Dm755 "usr/bin/$pkgname" "$pkgdir/opt/$pkgname/bin/$pkgname"
-  install -Dm755 usr/lib/libdiscord_partner_sdk.so \
-    "$pkgdir/opt/$pkgname/lib/libdiscord_partner_sdk.so"
+  # Electron needs its resources (app.asar, locales, …) adjacent to the
+  # binary, so install the whole tree under /opt and symlink into PATH.
+  install -dm755 "$pkgdir/opt/$pkgname"
+  cp -a usr/lib/"$pkgname"/. "$pkgdir/opt/$pkgname/"
+  chmod 4755 "$pkgdir/opt/$pkgname/chrome-sandbox" 2>/dev/null || true
+
   install -dm755 "$pkgdir/usr/bin"
-  ln -s "/opt/$pkgname/bin/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  ln -s "/opt/$pkgname/$pkgname" "$pkgdir/usr/bin/$pkgname"
 
   install -Dm644 usr/share/applications/*.desktop \
+    "$pkgdir/usr/share/applications/$pkgname.desktop"
+  # Point Exec at the installed path and make sure the deep-link callback URL
+  # is forwarded (Exec needs a %u for the doughmination:// sign-in bounce).
+  sed -i \
+    -e "s|^Exec=.*|Exec=/usr/bin/$pkgname %u|" \
     "$pkgdir/usr/share/applications/$pkgname.desktop"
 
   local icon dir
   for icon in usr/share/icons/hicolor/*/apps/"$pkgname".png; do
+    [ -f "$icon" ] || continue
     dir="${icon#usr/share/icons/hicolor/}"
     dir="${dir%%/*}"
-    # Tauri emits a "256x256@2" directory; hicolor's scaled-icon dirs are
-    # named "...@2x", and anything else is ignored by the icon cache.
-    [[ $dir == *@2 ]] && dir="${dir}x"
     install -Dm644 "$icon" "$pkgdir/usr/share/icons/hicolor/$dir/apps/$pkgname.png"
   done
 

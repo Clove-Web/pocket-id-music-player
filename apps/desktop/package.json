@@ -1,0 +1,22 @@
+{
+  "name": "@musicapp/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Doughmination Music desktop app (Electron shell + Discord Rich Presence)",
+  "main": "dist/main.js",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.json",
+    "dev": "bun run build:main && electron .",
+    "build": "bun run build:main && electron-builder",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@xhayper/discord-rpc": "^1.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,53 @@
+appId: uk.doughmination.music.desktop
+productName: Doughmination Music
+copyright: © Clove Twilight
+
+directories:
+  output: release
+  buildResources: build
+
+# The compiled main/preload plus package.json (electron-builder reads
+# `dependencies` from it to bundle @xhayper/discord-rpc).
+files:
+  - dist/**/*
+  - package.json
+
+# Register doughmination:// so the SSO deep link comes back to the app
+# (writes the nsis registry keys / Info.plist CFBundleURLTypes / .desktop
+# MimeType).
+protocols:
+  - name: Doughmination Music
+    schemes:
+      - doughmination
+
+# Stable, version-less asset names so the site's /download?platform=… links
+# and the AUR PKGBUILD can point at a release without a per-version filename
+# (see web/server/src/lib/downloads.json).
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.music
+  icon: build/icon.icns
+  artifactName: Doughmination.Music_${arch}.${ext}
+
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+  artifactName: Doughmination.Music_x64-setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Audio
+  icon: build/icon.png
+  maintainer: Clove Twilight <clovetwilight3@outlook.com>
+  executableName: doughmination-music
+  artifactName: Doughmination.Music_amd64.${ext}

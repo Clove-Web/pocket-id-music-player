@@ -4,28 +4,19 @@ version: 2
 # semver bump so you get a few tidy PRs a week instead of a flood of individual
 # ones. Weekly cadence; bump the interval to `daily` if you want them sooner.
 updates:
-  # JavaScript/TypeScript deps — root plus every workspace package. Uses the
-  # native `bun` ecosystem (GA since Feb 2025) so bun.lock is updated too.
+  # JavaScript/TypeScript deps — root plus every workspace package (web/* and
+  # apps/*). Uses the native `bun` ecosystem (GA since Feb 2025) so bun.lock is
+  # updated too.
   - package-ecosystem: bun
     directories:
       - "/"
+      - "/web/*"
       - "/apps/*"
-      - "/packages/*"
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
       bun-minor-patch:
-        update-types: ["minor", "patch"]
-
-  # Rust deps for the Tauri desktop app.
-  - package-ecosystem: cargo
-    directory: "/apps/desktop/src-tauri"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
-    groups:
-      cargo-minor-patch:
         update-types: ["minor", "patch"]
 
   # The actions pinned in .github/workflows (checkout, docker/*, setup-*, etc.).

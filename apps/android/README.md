@@ -31,7 +31,7 @@ web ⇄ native contract.
 ```
 
 * **WebView** keeps owning the library, queue, shuffle/repeat and all UI.
-* **`packages/player`** detects the native host and swaps its `<audio>` element
+* **`web/player`** detects the native host and swaps its `<audio>` element
   for a native-backed shim (`native-audio.ts`) — the Player logic is unchanged.
 * **`PlaybackService`** is a Media3 `MediaSessionService`; Media3 builds the
   media notification/lock-screen controls for us.
@@ -43,7 +43,7 @@ web ⇄ native contract.
 ## Requirements to actually work end-to-end
 
 1. **The site must be redeployed with the web-side changes** in this repo
-   (`packages/player/src/native-audio.ts`, `apps/web/src/native.ts`, and the
+   (`web/player/src/native-audio.ts`, `web/client/src/native.ts`, and the
    Player/app wiring). The APK loads the live site, so until those ship, the
    native bridge is dormant and audio falls back to the (suspended) WebView.
 2. Sign-in happens **inside the WebView** (normal web OIDC flow); the resulting
@@ -81,16 +81,16 @@ build still succeeds locally.
 
 ## CI
 
-`.github/workflows/android.yml` builds and publishes the signed APK on manual
-dispatch, reusing the existing `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` /
-`ANDROID_KEY_BASE64` secrets. It's fully independent of the Tauri `release`
-workflow.
+The `android` job in `.github/workflows/release.yml` builds and signs this APK
+and attaches it to the same GitHub Release as the desktop (Electron) builds,
+using the `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` / `ANDROID_KEY_BASE64`
+secrets.
 
 ## Notes / limitations
 
-* App id is `uk.doughmination.music` (the Tauri build was
-  `uk.doughmination.music.desktop`), so this installs **alongside** the old
-  APK rather than upgrading it. Uninstall the old one if you want just this.
+* App id is `uk.doughmination.music` (the desktop build is
+  `uk.doughmination.music.desktop`), so this installs **alongside** the desktop
+  app rather than upgrading it.
 * The audio visualizer (Web Audio) is disabled on Android — native owns the
   audio pipeline, which Web Audio can't tap.
 * Not yet compiled on-device here; expect a round or two of on-device iteration.

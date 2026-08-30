@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/server/public/favicon.png" alt="Doughmination Music" width="140" />
+  <img src="web/server/public/favicon.png" alt="Doughmination Music" width="140" />
 </p>
 
 <h1 align="center">Doughmination Music</h1>
@@ -28,7 +28,8 @@ account system.
 | Runtime     | [Bun](https://bun.sh)                                                    |
 | Backend     | [Hono](https://hono.dev) · PostgreSQL · Redis · `jose` (OIDC/JWT)        |
 | Web app     | Vanilla TypeScript (no framework), bundled by Bun · Bootstrap Icons      |
-| Desktop/Android | [Tauri 2](https://tauri.app) (Rust) · deep-link + opener plugins · Discord Social SDK |
+| Desktop     | [Electron](https://www.electronjs.org/) (TypeScript) · Discord Rich Presence over IPC |
+| Android     | Native Kotlin · WebView UI + Media3/ExoPlayer for background playback    |
 | Auth        | Pocket ID (OIDC) — session cookie for web, bearer token for native apps  |
 | Media       | FFmpeg (Opus transcode) · optional nginx `X-Accel-Redirect` offload      |
 | Tooling     | Bun workspaces monorepo · Docker / Compose                              |
@@ -36,19 +37,21 @@ account system.
 ## Project structure
 
 ```
-apps/
-  server/    Hono API — auth, streaming, uploads; also serves the web app
-  web/       Vanilla-TS single-page frontend
-  desktop/   Tauri shell (desktop + Android), Rust side owns Discord presence
-packages/
+web/
+  server/    Hono API — auth, streaming, uploads; also serves the web client
+  client/    Vanilla-TS single-page frontend
   shared/    Typed API client + shared types
   player/    Framework-agnostic <audio> controller (queue, shuffle, visualiser)
+apps/
+  desktop/   Electron shell (TS main + preload) — deep-link SSO + Discord presence
+  android/   Native Kotlin app — WebView UI + Media3 background playback
 ```
 
 ## Getting started
 
-**Prerequisites:** [Bun](https://bun.sh), PostgreSQL, and Redis. (For the desktop/
-Android apps you'll also need the Rust toolchain and the Android SDK/NDK.)
+**Prerequisites:** [Bun](https://bun.sh), PostgreSQL, and Redis. The desktop app
+needs only Bun (Electron installs as a dev dependency); the Android app needs
+JDK 17 and the Android SDK.
 
 ```bash
 # 1. Install dependencies
@@ -88,67 +91,30 @@ list. The essentials:
 # Web (production bundle)
 bun run build
 
-# Desktop dev / release
+# Desktop (Electron) — dev run / packaged build
 bun run desktop:dev
-bun run desktop:build
+bun run desktop:build     # writes apps/desktop/release/
 
-# Android
-bun run android:init      # first time only
-bun run android:dev
-bun run android:build     # produces an APK
+# Android — native Kotlin app, built with Gradle
+cd apps/android && gradle assembleRelease
 ```
 
-### Linux runtime requirement
-
-The Linux build (AppImage) does **not** bundle WebKitGTK or the GTK stack
-around it — you need `webkit2gtk-4.1` (Arch/Fedora package name;
-Debian/Ubuntu: `libwebkit2gtk-4.1-0`) installed system-wide for the app to
-launch. Everything else it now takes from your system (GTK 3, GLib, libsoup3,
-GStreamer) is a hard dependency of that one package, so installing it is the
-whole requirement.
-
-This is deliberate, not an oversight: an AppImage-bundled WebKitGTK build has
-been observed to hard-crash at startup (`Could not create default EGL display:
-EGL_BAD_PARAMETER`) on at least one real Wayland compositor + modern Mesa
-combination that the same machine's system-installed WebKitGTK handles fine —
-GPU/Wayland-coupled libraries like this are fragile to bundle across distros,
-which is exactly why every other WebKitGTK-based Linux package (`.deb`/`.rpm`)
-declares it as a runtime dependency instead of shipping its own copy. This app
-does the same.
-
-The unbundling has to be all-or-nothing. WebKitGTK, JavaScriptCore, GStreamer
-and GLib are one version-coupled graph: an earlier build shipped the rest of
-the graph while dropping only `libwebkit2gtk`, which made your system's
-WebKitGTK load against the AppImage's older JavaScriptCore and die instantly
-with `undefined symbol: _ZN3WTF20base64EncodeToString...`. The release
-workflow therefore strips *every* bundled library except the app's own Discord
-SDK — see the "unbundle the GTK/WebKitGTK stack" step in
-`.github/workflows/release.yml`.
-
-```bash
-# Arch / Manjaro
-sudo pacman -S webkit2gtk-4.1
-
-# Debian / Ubuntu
-sudo apt install libwebkit2gtk-4.1-0
-
-# Fedora
-sudo dnf install webkit2gtk4.1
-```
+The desktop app is a thin shell: it loads the live site (default
+`https://doughmination.me`, overridable via `DMND_SERVER_URL` or **File → Set
+Server URL…**) and adds `doughmination://` deep-link sign-in plus Discord Rich
+Presence over the local Discord IPC socket.
 
 ### Arch: install from the AUR
 
-Arch users can skip the AppImage entirely — `doughmination-music`
-repackages it as a normal system package (`/usr/bin/doughmination-music`, a
-desktop entry, and hicolor icons), so `webkit2gtk-4.1` and the rest arrive as
-pacman dependencies:
+Arch users can skip the AppImage — `doughmination-music` repackages it as a
+normal system package (`/usr/bin/doughmination-music`, a desktop entry, and
+hicolor icons). Electron bundles its own Chromium, so the only dependencies are
+the system libraries Chromium loads at runtime (`gtk3`, `nss`, `alsa-lib`, …),
+pulled in automatically by pacman:
 
 ```bash
 paru -S doughmination-music   # or: yay -S doughmination-music
 ```
-
-> [!NOTE]
-> There are some issues with attaching to the Wayland display, if this happens, run the app with `WEBKIT_DISABLE_DMABUF_RENDERER=1` as this is a found fix
 
 The PKGBUILD lives at [`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD) and is
 the source of truth — the release workflow's `aur` job rewrites its `pkgver`,

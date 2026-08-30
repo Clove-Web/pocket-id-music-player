@@ -1,8 +1,0 @@
-[env]
-# "relative = true" resolves this against the parent of this .cargo/
-# directory, i.e. apps/desktop/src-tauri/discord_social_sdk — wherever this
-# checkout lives. Needed because discord_social_sdk_sys is pulled in as a
-# git dependency, so it sits outside this crate's own workspace and its
-# built-in "look in the workspace root" search can't find the SDK on its
-# own (see the build error this fixes).
-DISCORD_SOCIAL_SDK_DIR = { value = "discord_social_sdk", relative = true }

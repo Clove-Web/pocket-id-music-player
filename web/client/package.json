@@ -1,0 +1,19 @@
+{
+  "name": "@musicapp/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun build src/app.ts --outdir dist --watch",
+    "build": "bun build src/app.ts --outdir dist --minify",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@musicapp/shared": "workspace:*",
+    "@musicapp/player": "workspace:*",
+    "music-metadata": "^11.15.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

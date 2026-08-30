@@ -8,9 +8,15 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY . .
+
+# apps/ (the Electron desktop app + Android sources) is excluded via
+# .dockerignore, so `bun install` only resolves the web/ workspaces. This env
+# var is belt-and-suspenders: if apps/ ever slips into the build context, it
+# still stops the ~250MB Electron binary download in a server-only image.
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 RUN bun install
 
-# Bundle the frontend (apps/web/src/app.ts -> apps/web/dist/app.js).
+# Bundle the frontend (web/client/src/app.ts -> web/client/dist/app.js).
 RUN bun run build
 
 # dotenvx is a normal dependency (in package.json), so it installs into the

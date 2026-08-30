@@ -7,7 +7,7 @@ screen controls.
 
 The web player keeps owning the *library, queue, shuffle/repeat, and UI*. It no
 longer produces sound on Android — instead it drives a native audio element
-(`NativeAudio`, see `packages/player/src/native-audio.ts`) that forwards every
+(`NativeAudio`, see `web/player/src/native-audio.ts`) that forwards every
 call across this bridge. Native is the single source of truth for playback
 position and play/pause state, and reports both back to the web layer.
 

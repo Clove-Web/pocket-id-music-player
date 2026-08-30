@@ -5,3 +5,8 @@ data/
 .env.keys
 .git
 *.log
+
+# The server image only needs the web/ workspaces. Excluding apps/ keeps the
+# Electron desktop app (its ~250MB Electron binary + electron-builder toolchain)
+# and the Android/Kotlin sources out of `bun install` and the image.
+apps/

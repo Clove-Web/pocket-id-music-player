@@ -4,27 +4,22 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "web/*",
+    "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -k -n api,web \"bun run --filter @musicapp/server dev\" \"bun run --filter @musicapp/web dev\"",
-    "build": "bun run --filter @musicapp/web build",
+    "dev": "concurrently -k -n api,web \"bun run --filter @musicapp/server dev\" \"bun run --filter @musicapp/client dev\"",
+    "build": "bun run --filter @musicapp/client build",
     "start": "bun run --filter @musicapp/server start",
     "migrate": "bun run --filter @musicapp/server migrate",
     "typecheck": "bun run --filter '*' typecheck",
-    "tauri": "tauri",
-    "desktop:dev": "cd apps/desktop/src-tauri && bunx tauri dev",
-    "desktop:build": "cd apps/desktop/src-tauri && bunx tauri build",
-    "android:init": "cd apps/desktop/src-tauri && bunx tauri android init",
-    "android:dev": "cd apps/desktop/src-tauri && bunx tauri android dev",
-    "android:build": "cd apps/desktop/src-tauri && bunx tauri android build --apk"
+    "desktop:dev": "bun run --filter @musicapp/desktop dev",
+    "desktop:build": "bun run --filter @musicapp/desktop build"
   },
   "dependencies": {
     "@dotenvx/dotenvx": "^2.21.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
     "concurrently": "^10.0.5",
     "typescript": "^7.0.2",
     "@types/bun": "^1.4.0"

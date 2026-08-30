@@ -1,18 +1,23 @@
 name: release
 
 # Builds every platform for one tag and publishes a single GitHub Release:
-# desktop (macOS/Linux/Windows via tauri-action) plus the signed native
-# Android APK (apps/android — a WebView shell around the site with a native
-# Media3 playback service for background/locked playback; NOT built via the
-# Tauri Android target). The desktop job creates the release as a *draft*;
-# the android job attaches the APK last and then flips it to published +
-# "latest", so the release only goes live once all artifacts are present.
 #
-# Used to be two workflows (this one covered desktop + a Tauri-built Android
-# APK; a separate android.yml covered the real apps/android APK under its own
-# "android-vX" tag). Merged into this single file/tag/release on 2026-08-22 —
-# the Tauri Android target never shipped background playback, so it was
-# always the wrong artifact to publish.
+#   create-release  makes the draft
+#   build           Electron desktop app for macOS / Linux / Windows via
+#                   electron-builder (apps/desktop — a thin shell over the live
+#                   site plus Discord Rich Presence over IPC; no Rust, no
+#                   proprietary SDK)
+#   android         the SIGNED native Android APK (apps/android — a WebView
+#                   shell with a native Media3 playback service for
+#                   background/locked playback), attached last, then the
+#                   release is flipped to published + "latest"
+#   aur             repackages the published Linux AppImage for the AUR
+#
+# The release only goes live once every artifact is present.
+#
+# Migrated off Tauri/Rust on 2026-08-30: gone are the Discord Social SDK fetch,
+# the Rust toolchain, the Linux WebKitGTK build deps, and the whole "unbundle
+# the GTK stack from the AppImage" dance — Electron ships its own Chromium.
 #
 # THIS FILE IS MADE BY CLAUDE, SO IF SHIT BREAKS, I'M SORRY!
 on:
@@ -32,10 +37,25 @@ on:
         type: string
 
 jobs:
+  # Create the draft release up front so the matrix jobs (and android/aur) all
+  # have something to attach to without racing each other on creation.
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          name: >-
+            ${{ inputs.codename
+            && format('Doughmination Music {0} "{1}"', inputs.version || github.ref_name, inputs.codename)
+            || format('Doughmination Music {0}', inputs.version || github.ref_name) }}
+          draft: true
+          prerelease: false
+
   build:
-    # tauri-action creates/updates a GitHub Release, which needs write access.
-    # The default GITHUB_TOKEN is read-only ("Resource not accessible by
-    # integration"), so grant it explicitly.
+    needs: create-release
     permissions:
       contents: write
 
@@ -44,283 +64,51 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: "--target universal-apple-darwin"
-          # Pinned to 22.04 (not ubuntu-latest/24.04): builds an AppImage
-          # against an older glibc/webkit so it runs on more distros, and
-          # keeps libappindicator3-dev available.
-          - platform: ubuntu-22.04
-            args: ""
+            electronArgs: "--universal"
+          - platform: ubuntu-latest
+            electronArgs: ""
           - platform: windows-latest
-            args: ""
+            electronArgs: ""
 
     runs-on: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v7
 
-      # The Discord SDK binaries used to be committed via Git LFS — 745MB of
-      # debug/iOS/Android builds this project never uses, re-fetched in full
-      # by all 3 matrix jobs on every run, which blew through GitHub's free
-      # LFS bandwidth budget and blocked every release build. Now a lean
-      # (~17MB), release-only, all-desktop-platforms re-host lives on our own
-      # CDN instead — not subject to that quota. See .gitignore for why the
-      # directory isn't tracked, and build.rs for how it's consumed once
-      # unpacked here.
-      - name: fetch Discord Social SDK
-        shell: bash
-        run: |
-          curl -sSL -o discord-sdk.zip "https://m.doughmination.gay/sdks/discord-sdk.zip"
-          unzip -q discord-sdk.zip -d apps/desktop/src-tauri
-          rm discord-sdk.zip
-
       - uses: oven-sh/setup-bun@v2
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: install Linux tauri deps
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          # libfuse2: lets the AppImage tooling (linuxdeploy) run at all.
-          # gstreamer*: Tauri's AppImage build runs linuxdeploy-plugin-gstreamer
-          #   (webkit2gtk uses gstreamer for HTML5 <audio>); without gstreamer
-          #   installed that plugin errors and linuxdeploy fails.
-          # gstreamer *runtime* packages only — the -dev variants pull in
-          # libunwind-dev, which conflicts with the runner's preinstalled
-          # packages ("held broken packages"). The AppImage gstreamer plugin
-          # only needs the runtime libs/plugins present, not headers.
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libfuse2 \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            gstreamer1.0-libav
 
       - run: bun install
 
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Run the AppImage tools in extract-and-run mode so they don't need
-          # FUSE (unavailable on GitHub runners) — the other half of the
-          # "failed to run linuxdeploy" fix.
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          # Help linuxdeploy resolve the Discord SDK shared object when bundling
-          # the AppImage (backs up the $ORIGIN rpath in build.rs). Linux-only
-          # var; harmless on the macOS/Windows runners.
-          LD_LIBRARY_PATH: ${{ github.workspace }}/apps/desktop/src-tauri/discord_social_sdk/lib/release
-        with:
-          projectPath: apps/desktop/src-tauri
-          # Manual runs supply the tag via the `version` input; tag pushes use
-          # the pushed tag name. tauri-action creates the tag + draft release.
-          tagName: ${{ inputs.version || github.ref_name }}
-          # Cosmetic only: `codename` decorates the release title and nothing
-          # else — not the tag, not the artifact names, not the AUR pkgver.
-          # Left off, the title is exactly what it always was.
-          releaseName: >-
-            ${{ inputs.codename
-            && format('Doughmination Music {0} "{1}"', inputs.version || github.ref_name, inputs.codename)
-            || format('Doughmination Music {0}', inputs.version || github.ref_name) }}
-          # Kept as a draft here on purpose — the android job publishes it as
-          # "latest" once the signed APK is uploaded (see the android job).
-          releaseDraft: true
-          prerelease: false
-          # --verbose surfaces the underlying linuxdeploy/bundler output so a
-          # failure shows the real error instead of just "failed to run …".
-          args: ${{ matrix.args }} --verbose
-
-      # Force the AppImage onto the host's GTK/WebKitGTK stack.
-      #
-      # Rationale (why we don't bundle WebKitGTK): a bundled WebKitGTK build
-      # has been confirmed to hard-crash at startup — "Could not create
-      # default EGL display: EGL_BAD_PARAMETER", before it ever touches a GPU
-      # — on at least one real Wayland compositor + modern Mesa combination
-      # where the SAME machine's system-installed WebKitGTK works fine.
-      # GPU/Wayland-coupled libraries are fragile to bundle across distros,
-      # which is exactly why every other WebKitGTK-based Linux package
-      # (.deb/.rpm) declares it as a runtime dependency instead of shipping
-      # its own copy. This app does the same — see ReadMe.md's "Linux runtime
-      # requirement".
-      #
-      # Why we strip the WHOLE stack and not just libwebkit2gtk: these
-      # libraries are one tightly version-coupled graph, so removing part of
-      # it and keeping the rest is *worse* than either extreme — the host
-      # loads its own copy of what we deleted, which then fails to resolve
-      # symbols against the Ubuntu 22.04 copies we kept. Deleting only
-      # libwebkit2gtk-4.1.so.0 (what this step used to do) shipped an
-      # AppImage that died instantly on Arch with:
-      #   symbol lookup error: /usr/lib/libwebkit2gtk-4.1.so.0:
-      #     undefined symbol: _ZN3WTF20base64EncodeToString...
-      # because host libwebkit2gtk was paired with the bundled (older)
-      # libjavascriptcoregtk. Clearing that one exposed the next link in the
-      # same chain, and so on: javascriptcoregtk -> gstreamer
-      # (gst_debug_log_id) -> glib (g_once_init_leave_pointer) -> libmount
-      # (MOUNT_2_40) -> ... It bottoms out only when the host provides the
-      # entire graph, so that's what we do: drop every bundled library except
-      # the app's own private one (the Discord SDK, which no distro ships).
-      #
-      # The linuxdeploy GTK hook is rewritten to match. Its stock version
-      # points GTK_PATH / GDK_PIXBUF_MODULE_FILE / GIO_EXTRA_MODULES /
-      # GTK_IM_MODULE_FILE / GSETTINGS_SCHEMA_DIR at module caches inside the
-      # AppDir that no longer exist — and that host GTK must not load anyway.
-      # GDK_BACKEND=x11 is kept from the stock hook (native Wayland crashes:
-      # tauri-apps/tauri#8541).
-      #
-      # Everything the host must now provide (gtk3, glib, libsoup3,
-      # gstreamer) is a hard dependency of webkit2gtk-4.1, so requiring that
-      # one package is still the whole ask.
-      #
-      # Re-uploads over what tauri-action just attached to the draft release.
-      - name: unbundle the GTK/WebKitGTK stack from the AppImage
-        if: matrix.platform == 'ubuntu-22.04'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.version || github.ref_name }}
-        run: |
-          # (no `pipefail`: `find | head -1` below can hand find an EPIPE.)
-          set -eu
-
-          APPIMAGE=$(find apps/desktop/src-tauri/target -maxdepth 5 -name "*.AppImage" | head -1)
-          if [ -z "$APPIMAGE" ]; then
-            echo "::error::No .AppImage found to patch"
-            exit 1
-          fi
-
-          DIR=$(cd "$(dirname "$APPIMAGE")" && pwd)
-          NAME=$(basename "$APPIMAGE")
-          cd "$DIR"
-          chmod +x "$NAME"
-          ./"$NAME" --appimage-extract >/dev/null
-
-          # Private, non-distro libraries that must survive the purge.
-          KEEP='libdiscord_partner_sdk.so'
-
-          echo "Bundled libraries before: $(find squashfs-root/usr/lib -type f -name '*.so*' | wc -l)"
-          find squashfs-root/usr/lib -mindepth 1 -maxdepth 1 \
-            ! -name "$KEEP" -exec rm -rf {} +
-          echo "Bundled libraries after:  $(find squashfs-root/usr/lib -type f -name '*.so*' | wc -l)"
-
-          # linuxdeploy also drags in the Ubuntu packages' /usr/share/doc and a
-          # copy of their GLib schemas. The docs are dead weight, and the
-          # schemas would shadow the host's (XDG_DATA_DIRS puts the AppDir
-          # first) with a 22.04-era set. Neither belongs here now.
-          rm -rf squashfs-root/usr/share/doc squashfs-root/usr/share/glib-2.0
-
-          # Fail loudly rather than shipping an AppImage missing its own lib.
-          if [ ! -f "squashfs-root/usr/lib/$KEEP" ]; then
-            echo "::error::$KEEP was removed — the app will not start"
-            exit 1
-          fi
-
-          # Two fixes to Tauri's generated .desktop entry, which the AUR
-          # package (packaging/aur/PKGBUILD) also installs verbatim:
-          #   - Exec had no %u, so the doughmination:// sign-in callback was
-          #     never passed to the app despite the MimeType line claiming
-          #     the scheme.
-          #   - Categories was emitted empty, which is invalid and leaves the
-          #     app uncategorised in menus.
-          for d in squashfs-root/*.desktop \
-                   squashfs-root/usr/share/applications/*.desktop; do
-            [ -f "$d" ] || continue
-            grep -q '%u' "$d" || sed -i 's|^\(Exec=.*\)$|\1 %u|' "$d"
-            sed -i 's|^Categories=$|Categories=AudioVideo;Audio;Player;|' "$d"
-          done
-
-          cat > squashfs-root/apprun-hooks/linuxdeploy-plugin-gtk.sh <<'HOOK'
-          #! /usr/bin/env bash
-          # Rewritten by .github/workflows/release.yml — see the comment on the
-          # "unbundle the GTK/WebKitGTK stack" step. GTK, GLib, GdkPixbuf, GIO
-          # and WebKitGTK all come from the host, so none of the stock hook's
-          # AppDir module/schema paths apply; setting them would make host GTK
-          # load Ubuntu 22.04 modules.
-          export APPDIR="${APPDIR:-"$(dirname "$(realpath "$0")")"}"
-          export GDK_BACKEND=x11 # native Wayland crashes: tauri-apps/tauri#8541
-          export XDG_DATA_DIRS="$APPDIR/usr/share:/usr/share:$XDG_DATA_DIRS"
-          HOOK
-
-          curl -sSL -o appimagetool \
-            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
-          # Same FUSE-less workaround as the tauri-action step above.
-          APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool squashfs-root "$NAME"
-
-          echo "Patched AppImage: $DIR/$NAME"
-          gh release upload "$TAG" "$NAME" --clobber
-
-          # appimagetool is itself an .AppImage sitting in the bundle
-          # directory; the rename step below globs that directory by
-          # extension, so both it and the extracted tree have to go.
-          rm -rf squashfs-root appimagetool
-
-      # Republish the desktop artifacts under version-less asset names.
-      #
-      # Tauri names bundles from `productName` plus tauri.conf.json's
-      # `version` — which is still 1.0.0 and is not bumped per release — so
-      # they land as Doughmination.Music_1.0.0_x64-setup.exe: a version that
-      # is both wrong and, if it ever were bumped, unstable. Stable names are
-      # what let the site's /download?platform=windows point at a release
-      # without hardcoding a filename per version (see
-      # apps/server/src/lib/downloads.json).
-      #
-      # tauri-action has already attached the versioned names to the draft
-      # release, so each file is re-uploaded under its stripped name and the
-      # versioned asset then deleted.
-      - name: republish artifacts under version-less names
+      # Compiles apps/desktop/src -> dist, then electron-builder packages it.
+      # electron-builder reads apps/desktop/package.json `dependencies` to
+      # bundle @xhayper/discord-rpc. Artifact names are pinned (version-less)
+      # in apps/desktop/electron-builder.yml so no rename step is needed.
+      - name: build desktop app
+        working-directory: apps/desktop
         shell: bash
+        run: bun run build:main && bunx electron-builder ${{ matrix.electronArgs }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.version || github.ref_name }}
-        run: |
-          set -eu
 
-          STAGE=$(mktemp -d)
-          found=0
-
-          # /usr/bin/find explicitly: on the Windows runner a bare `find` can
-          # resolve to Windows' FIND.EXE, which takes none of these flags.
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            found=1
-            old=$(basename "$f")
-            # Strips a _1.2.3_ / -1.2.3- segment wherever the bundler put it:
-            #   Doughmination.Music_1.0.0_x64-setup.exe
-            #     -> Doughmination.Music_x64-setup.exe
-            #   Doughmination.Music-1.0.0-1.x86_64.rpm
-            #     -> Doughmination.Music-1.x86_64.rpm
-            new=$(printf '%s' "$old" | sed -E 's/([._-])[0-9]+\.[0-9]+\.[0-9]+[._-]/\1/')
-            if [ "$new" = "$old" ]; then
-              echo "unchanged: $old"
-              continue
-            fi
-            echo "$old -> $new"
-            cp "$f" "$STAGE/$new"
-            gh release upload "$TAG" "$STAGE/$new" --clobber
-            gh release delete-asset "$TAG" "$old" --yes
-          done <<EOF
-          $(/usr/bin/find apps/desktop/src-tauri/target -type f -path '*/bundle/*' \
-              \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' \
-                 -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \
-                 -o -name '*.app.tar.gz' \))
-          EOF
-
-          if [ "$found" = 0 ]; then
-            echo "::error::No bundled artifacts found to rename"
-            exit 1
-          fi
+      - name: attach artifacts to the draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          draft: true
+          files: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
 
   android:
     # Builds and publishes the SIGNED native Android APK (apps/android): a
     # WebView shell around the site plus a native Media3 playback service
-    # (background/locked playback + a media notification) — NOT the Tauri
-    # Android target, which can't provide that. Runs after the desktop matrix
-    # so the draft release already exists to attach the APK to. If any desktop
-    # build fails, this is skipped and the release stays a draft — we don't
-    # publish a half-built release.
+    # (background/locked playback + a media notification). Runs after the
+    # desktop matrix so the draft release already exists to attach the APK to.
+    # If any desktop build fails, this is skipped and the release stays a
+    # draft — we don't publish a half-built release.
     needs: build
     runs-on: ubuntu-latest
 
@@ -435,9 +223,9 @@ jobs:
 
           PKGVER="${TAG#v}"
 
-          # tauri.conf.json's `version` — not the git tag — is what ends up in
-          # the artifact filename, so ask the release what it's actually
-          # called instead of reconstructing it and 404ing on a mismatch.
+          # The AppImage name is pinned version-less in
+          # apps/desktop/electron-builder.yml, but ask the release what it's
+          # actually called rather than hardcoding it here too.
           APPIMAGE_NAME=$(gh release view "$TAG" --repo "$REPO" \
             --json assets --jq '.assets[].name | select(endswith(".AppImage"))' \
             | head -1)

@@ -4,12 +4,7 @@ data/
 .env.keys
 node_modules/
 .DS_Store
-apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/gen/
-# Discord Social SDK: no longer committed (was blowing through GitHub's LFS
-# bandwidth budget — 745MB of debug/iOS/Android binaries this project never
-# builds, re-downloaded in full by 3 parallel CI jobs on every run). CI fetches
-# a lean, release-only re-host from m.doughmination.gay instead — see
-# release.yml. For local dev, download the SDK from the Discord Developer
-# Portal and unzip it here, or grab the lean re-host from the same CDN URL.
-apps/desktop/src-tauri/discord_social_sdk/
+
+# Electron desktop build output (apps/desktop)
+apps/desktop/dist/
+apps/desktop/release/
