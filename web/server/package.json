@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@musicapp/shared": "workspace:*",
-    "hono": "^4.13.3",
+    "hono": "^4.13.5",
     "ioredis": "^6.0.0",
     "jose": "^6.2.9",
     "music-metadata": "^11.15.0",
