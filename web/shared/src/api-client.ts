@@ -428,9 +428,22 @@ export const api = {
   },
 
   // Not fetched — Last.fm's own auth page needs a real browser navigation,
-  // not an XHR/fetch redirect.
-  lastfmConnectUrl(): string {
-    return url("/api/lastfm/connect");
+  // not an XHR/fetch redirect. `native` routes the return leg back through the
+  // doughmination:// deep link (desktop: the whole flow runs in the system
+  // browser, which has no session) instead of the cookie-authenticated
+  // /callback.
+  lastfmConnectUrl(native = false): string {
+    return url(`/api/lastfm/connect${native ? "?native=1" : ""}`);
+  },
+
+  // Desktop only: finish a native connect by handing the Last.fm token the
+  // deep link carried back to an authenticated endpoint.
+  lastfmNativeComplete(token: string): Promise<{ ok: boolean; username: string }> {
+    return fetch(url("/api/lastfm/native-complete"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    }).then(json<{ ok: boolean; username: string }>);
   },
 
   lastfmDisconnect(): Promise<Response> {

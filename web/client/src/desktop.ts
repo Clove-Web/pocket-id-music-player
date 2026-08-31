@@ -9,6 +9,7 @@
 // Tauri local-bundle build needed.
 
 import {
+  api,
   configureAuthToken,
   startNativeLogin,
   completeNativeLogin,
@@ -71,6 +72,27 @@ export function openExternal(url: string): boolean {
   return true;
 }
 
+<<<<<<< Updated upstream
+=======
+// Last.fm connect on desktop runs entirely in the system browser (same reason
+// as SSO — no passkeys / wrong cookie jar in the webview). It returns via
+// doughmination://lastfm/callback?token=… which initDesktopAuth catches and
+// routes to this handler.
+type LastfmResult = { ok: true; username?: string } | { ok: false };
+let lastfmHandler: ((r: LastfmResult) => void) | null = null;
+
+export function onLastfmConnect(cb: (r: LastfmResult) => void): void {
+  lastfmHandler = cb;
+}
+
+// Kick off Last.fm's auth page in the system browser.
+export function startDesktopLastfmConnect(connectUrl: string): boolean {
+  if (!bridge) return false;
+  void bridge.openExternal(connectUrl);
+  return true;
+}
+
+>>>>>>> Stashed changes
 // True once a token is stored — lets the UI skip a re-auth on boot.
 export function hasDesktopToken(): boolean {
   try {
@@ -110,12 +132,33 @@ export async function initDesktopAuth(onLoggedIn: () => void): Promise<void> {
   }
 
   bridge.onDeepLink(async (raw) => {
-    let code: string | null = null;
+    let link: URL | null = null;
     try {
-      code = new URL(raw).searchParams.get("code");
+      link = new URL(raw);
     } catch {
       /* not a URL we care about */
     }
+    if (!link) return;
+
+    // doughmination://lastfm/callback?token=… — finish a Last.fm connect that
+    // ran in the system browser.
+    if (link.host === "lastfm") {
+      const token = link.searchParams.get("token");
+      if (!token || link.searchParams.get("error")) {
+        lastfmHandler?.({ ok: false });
+        return;
+      }
+      try {
+        const res = await api.lastfmNativeComplete(token);
+        lastfmHandler?.({ ok: true, username: res.username });
+      } catch (err) {
+        console.error("lastfm native connect failed", err);
+        lastfmHandler?.({ ok: false });
+      }
+      return;
+    }
+
+    const code = link.searchParams.get("code");
     if (!code) return;
 
     let verifier = "";

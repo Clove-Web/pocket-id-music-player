@@ -7,10 +7,22 @@ directories:
   buildResources: build
 
 # The compiled main/preload plus package.json (electron-builder reads
-# `dependencies` from it to bundle @xhayper/discord-rpc).
+# `dependencies` from it to bundle @xhayper/discord-rpc + electron-updater).
+# icon.* rides along so the runtime BrowserWindow `icon` (title bar / taskbar
+# on Linux, dev on every OS) resolves inside app.asar.
 files:
   - dist/**/*
+  - build/icon.png
+  - build/icon.ico
   - package.json
+
+# Where electron-updater looks for new versions. The release workflow publishes
+# every build to this repo's GitHub Releases, including the latest*.yml update
+# feeds electron-builder emits alongside the installers.
+publish:
+  provider: github
+  owner: Clove-Web
+  repo: pocket-id-music-player
 
 # Register doughmination:// so the SSO deep link comes back to the app
 # (writes the nsis registry keys / Info.plist CFBundleURLTypes / .desktop

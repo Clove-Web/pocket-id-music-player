@@ -50,6 +50,8 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-2) transparent;
 }
 
 body {
@@ -58,6 +60,39 @@ body {
   background: var(--bg);
   color: var(--text);
   overflow-x: hidden;
+}
+
+/* --- scrollbars + selection: match the dark palette instead of the OS default
+   (the pale native scrollbar and blue highlight look broken on this bg,
+   especially in the Electron shell). `scrollbar-*` for Firefox lives on the
+   `*` rule above. --- */
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--panel-2);
+  border: 3px solid var(--bg);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2b3040;
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--bg);
 }
 
 button {
@@ -1515,10 +1550,23 @@ button {
 
 /* --- app icon / brand --- */
 
+/* Both brand marks are <button>s that navigate home — strip the native
+   chrome. The sidebar `.brand` rule above still sets the type scale (font
+   size / weight / margin), so don't reset `font` here. */
 .brand {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.brand:hover {
+  color: var(--accent);
 }
 
 .brand-logo {
@@ -1537,8 +1585,17 @@ button {
   right: 0.9rem;
   width: 2rem;
   height: 2rem;
-  border-radius: 8px;
+  padding: 0;
+  border: none;
+  background: none;
   z-index: 46;
+}
+
+.app-logo-corner img {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  display: block;
 }
 
 @media (max-width: 768px) {

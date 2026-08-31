@@ -30,7 +30,7 @@ account system.
 | Runtime     | [Bun](https://bun.sh)                                                    |
 | Backend     | [Hono](https://hono.dev) · PostgreSQL · Redis · `jose` (OIDC/JWT)        |
 | Web app     | Vanilla TypeScript (no framework), bundled by Bun · Bootstrap Icons      |
-| Desktop     | [Electron](https://www.electronjs.org/) (TypeScript) · Discord Rich Presence over IPC |
+| Desktop     | [Electron](https://www.electronjs.org/) (TypeScript) · Discord Rich Presence over IPC · auto-update from GitHub Releases |
 | Android     | Native Kotlin · WebView UI + Media3/ExoPlayer for background playback    |
 | Auth        | Pocket ID (OIDC) — session cookie for web, bearer token for native apps  |
 | Media       | FFmpeg (Opus transcode) · `yt-dlp` (YouTube import) · optional nginx `X-Accel-Redirect` offload |
@@ -105,9 +105,12 @@ cd apps/android && gradle assembleRelease
 ```
 
 The desktop app is a thin shell: it loads the live site (default
-`https://doughmination.me`, overridable via `DMND_SERVER_URL` or **File → Set
-Server URL…**) and adds `doughmination://` deep-link sign-in plus Discord Rich
-Presence over the local Discord IPC socket.
+`https://doughmination.me`, overridable via `DMND_SERVER_URL`, or **File → Set
+Server URL…** on macOS / **Ctrl+Alt+S** on Windows/Linux) and adds
+`doughmination://` deep-link sign-in (and Last.fm connect), Discord Rich
+Presence over the local Discord IPC socket, and background auto-update from
+this repo's GitHub Releases. Windows/Linux builds run without a menu bar;
+macOS keeps the standard application menu.
 
 ### Arch: install from the AUR
 

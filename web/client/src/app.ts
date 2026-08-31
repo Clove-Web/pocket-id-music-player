@@ -23,6 +23,8 @@ import {
   initDesktopBridge,
   initDesktopAuth,
   startDesktopLogin,
+  startDesktopLastfmConnect,
+  onLastfmConnect,
   clearDesktopToken,
   isDesktop,
   openExternal,
@@ -400,7 +402,9 @@ async function refreshAdminCounts(): Promise<void> {
 function render(): void {
   root.innerHTML = `
     <button class="hamburger" id="hamburger" aria-label="Menu"><i class="bi bi-list"></i></button>
-    <img class="app-logo-corner" src="/favicon.png" alt="Doughmination Music" />
+    <button class="app-logo-corner" id="logo-home" aria-label="Home" title="Home">
+      <img src="/favicon.png" alt="Doughmination Music" />
+    </button>
     <div class="layout">
       <aside class="sidebar" id="sidebar"></aside>
       <div class="scrim" id="scrim"></div>
@@ -445,6 +449,11 @@ function render(): void {
   sidebar
     ?.querySelectorAll("[data-view],[data-playlist],#upload-btn")
     .forEach((b) => b.addEventListener("click", closeDrawer));
+
+  document.getElementById("logo-home")?.addEventListener("click", () => {
+    closeDrawer();
+    navigate({ kind: "library" });
+  });
 }
 
 // Web navigates the same tab straight to the login route (cookie flow).
@@ -517,7 +526,9 @@ function renderSidebar(): void {
     </button>`;
 
   el.innerHTML = `
-    <div class="brand"><img class="brand-logo" src="/favicon.png" alt="" /> Doughmination Music</div>
+    <button class="brand" id="brand-home" title="Home">
+      <img class="brand-logo" src="/favicon.png" alt="" /> Doughmination Music
+    </button>
     ${nav("library", "Library")}
     ${state.me ? nav("liked", `<i class="bi bi-heart-fill"></i> Liked Songs`) : ""}
     ${
@@ -582,6 +593,7 @@ function renderSidebar(): void {
     });
   });
 
+  document.getElementById("brand-home")?.addEventListener("click", () => navigate({ kind: "library" }));
   document.getElementById("upload-btn")?.addEventListener("click", openUploadModal);
   wireSignIn("sidebar-signin");
 
@@ -2194,12 +2206,35 @@ async function renderSettings(el: HTMLElement): Promise<void> {
             `
             : `
               <p>Connect your Last.fm account to scrobble what you play here.</p>
-              <a class="btn btn-primary" href="${api.lastfmConnectUrl()}">Connect Last.fm</a>
+              ${
+                isDesktop
+                  ? `<button class="btn btn-primary" id="lastfm-connect">Connect Last.fm</button>`
+                  : `<a class="btn btn-primary" href="${api.lastfmConnectUrl()}">Connect Last.fm</a>`
+              }
             `
       }
       <span id="lastfm-status" class="upload-status"></span>
     </section>
   `;
+
+  // Desktop: the connect flow runs in the system browser and returns via the
+  // doughmination://lastfm/callback deep link (see desktop.ts).
+  document.getElementById("lastfm-connect")?.addEventListener("click", () => {
+    const s = document.getElementById("lastfm-status");
+    if (s) s.textContent = "Opening Last.fm in your browser…";
+    onLastfmConnect((r) => {
+      if (r.ok) {
+        flash("Last.fm connected.");
+        if (state.view.kind === "settings") void renderSettings(el);
+      } else {
+        flash("Couldn't connect Last.fm. Try again?");
+        if (s) s.textContent = "";
+      }
+    });
+    if (!startDesktopLastfmConnect(api.lastfmConnectUrl(true)) && s) {
+      s.textContent = "Couldn't open the browser.";
+    }
+  });
 
   document.getElementById("lastfm-disconnect")?.addEventListener("click", async () => {
     const s = document.getElementById("lastfm-status");

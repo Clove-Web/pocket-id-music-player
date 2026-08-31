@@ -79,6 +79,16 @@ jobs:
 
       - run: bun install
 
+      # electron-updater compares the running app's version against the one in
+      # the published latest*.yml, so the packaged build has to carry the tag's
+      # version (the checked-in package.json is only ever a floor).
+      - name: stamp desktop version
+        working-directory: apps/desktop
+        shell: bash
+        run: npm version --no-git-tag-version --allow-same-version "${VERSION#v}"
+        env:
+          VERSION: ${{ inputs.version || github.ref_name }}
+
       # Compiles apps/desktop/src -> dist, then electron-builder packages it.
       # electron-builder reads apps/desktop/package.json `dependencies` to
       # bundle @xhayper/discord-rpc. Artifact names are pinned (version-less)
@@ -101,6 +111,8 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
 
   android:
     # Builds and publishes the SIGNED native Android APK (apps/android): a

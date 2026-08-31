@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@xhayper/discord-rpc": "^1.2.1"
+    "@xhayper/discord-rpc": "^1.2.1",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
