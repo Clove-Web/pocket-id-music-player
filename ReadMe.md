@@ -21,6 +21,7 @@ account system.
 - Discord Rich Presence (desktop) showing what you're playing
 - OS media controls / lock-screen widget (media keys, Now Playing)
 - One codebase, three targets: **web**, **desktop** (Windows/macOS/Linux), and **Android**
+- In-app **Get the app** page (`/downloads`) with the latest per-platform builds, plus back/forward history arrows in the header
 
 ## Tech stack
 

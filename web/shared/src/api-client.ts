@@ -16,6 +16,7 @@ import type {
   LinkRequest,
   DuplicateReview,
   Lyrics,
+  AppDownloads,
 } from "./types.ts";
 
 let baseUrl = "";
@@ -461,5 +462,11 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(track),
     });
+  },
+
+  // Native app builds for the "Get the app" page — latest release's per-
+  // platform asset URLs, resolved server-side from downloads.json.
+  getDownloads(): Promise<AppDownloads> {
+    return fetch(url("/api/downloads")).then(json<AppDownloads>);
   },
 };

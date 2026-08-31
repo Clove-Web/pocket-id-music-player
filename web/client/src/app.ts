@@ -25,6 +25,7 @@ import {
   startDesktopLogin,
   clearDesktopToken,
   isDesktop,
+  openExternal,
   syncDiscordPresence,
 } from "./desktop.ts";
 import { initNative } from "./native.ts";
@@ -49,6 +50,7 @@ type View =
   | { kind: "linkRequests" }
   | { kind: "pendingSongs" }
   | { kind: "editRequests" }
+  | { kind: "downloads" }
   | { kind: "settings" };
 
 // Admin-only views, and views that need any account, gated in boot()/popstate.
@@ -85,6 +87,7 @@ function viewToPath(view: View): string {
     case "linkRequests": return "/admin/link-requests";
     case "pendingSongs": return "/admin/pending";
     case "editRequests": return "/admin/edit-requests";
+    case "downloads": return "/downloads";
     case "settings": return "/settings";
   }
 }
@@ -101,9 +104,16 @@ function pathToView(pathname: string): View {
   if (head === "admin" && id === "link-requests") return { kind: "linkRequests" };
   if (head === "admin" && id === "pending") return { kind: "pendingSongs" };
   if (head === "admin" && id === "edit-requests") return { kind: "editRequests" };
+  if (head === "downloads") return { kind: "downloads" };
   if (head === "settings") return { kind: "settings" };
   return { kind: "library" };
 }
+
+// Position in our own in-app history, mirrored into history.state, so the
+// header's back/forward arrows can tell when they're at an end. It's a
+// counter, not the browser's real history length (which we can't read).
+let navPos = 0;
+let navMax = 0;
 
 // Every user-triggered view change goes through here so the address bar
 // always matches what's on screen (and so it's shareable/hotlinkable).
@@ -111,8 +121,19 @@ function pathToView(pathname: string): View {
 // the URL there is already correct — see the listener below.
 function navigate(view: View): void {
   state.view = view;
-  history.pushState(null, "", viewToPath(view));
+  navPos += 1;
+  navMax = navPos; // a new navigation truncates any forward stack
+  history.pushState({ navPos }, "", viewToPath(view));
   render();
+}
+
+// In-app back/forward. history.back()/forward() fire popstate, which just
+// re-renders the SPA — no page load, so audio keeps playing.
+function goBack(): void {
+  if (navPos > 0) history.back();
+}
+function goForward(): void {
+  if (navPos < navMax) history.forward();
 }
 
 const state = {
@@ -294,14 +315,31 @@ async function boot(): Promise<void> {
 
   restoreNowPlaying();
   handleLastfmRedirect();
+  // Stamp the landing entry so the back/forward arrows have a baseline.
+  history.replaceState({ navPos }, "", window.location.pathname + window.location.search);
   render();
 }
 
 // Back/forward: the URL is already correct, so just re-derive the view from
 // it and render — no history.pushState (that would double up entries).
-window.addEventListener("popstate", () => {
+window.addEventListener("popstate", (e) => {
+  const p = (e.state as { navPos?: number } | null)?.navPos;
+  navPos = typeof p === "number" ? p : 0;
   state.view = allowedView(pathToView(window.location.pathname));
   render();
+});
+
+// Alt+Arrow back/forward (browsers already do this on web; belt-and-braces
+// for the Electron shell where there's no browser chrome).
+document.addEventListener("keydown", (e) => {
+  if (!e.altKey || e.metaKey || e.ctrlKey) return;
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    goBack();
+  } else if (e.key === "ArrowRight") {
+    e.preventDefault();
+    goForward();
+  }
 });
 
 // After the Last.fm "Connect" handshake, the backend redirects back here
@@ -316,7 +354,7 @@ function handleLastfmRedirect(): void {
   if (result === "connected") flash("Last.fm connected.");
   else if (result === "error") flash("Couldn't connect Last.fm. Try again?");
 
-  history.replaceState(null, "", viewToPath(state.view));
+  history.replaceState({ navPos }, "", viewToPath(state.view));
 }
 
 async function loadSongs(): Promise<void> {
@@ -366,13 +404,32 @@ function render(): void {
     <div class="layout">
       <aside class="sidebar" id="sidebar"></aside>
       <div class="scrim" id="scrim"></div>
-      <main class="main" id="main"></main>
+      <main class="main" id="main">
+        <nav class="nav-arrows" aria-label="History">
+          <button class="icon-btn" id="nav-back" title="Back (Alt+Left)" aria-label="Back">
+            <i class="bi bi-chevron-left"></i></button>
+          <button class="icon-btn" id="nav-fwd" title="Forward (Alt+Right)" aria-label="Forward">
+            <i class="bi bi-chevron-right"></i></button>
+        </nav>
+        <div id="main-content"></div>
+      </main>
     </div>
     <div class="playerbar" id="playerbar"></div>
   `;
   renderSidebar();
   renderMain();
   renderPlayerBar();
+
+  const back = document.getElementById("nav-back") as HTMLButtonElement | null;
+  const fwd = document.getElementById("nav-fwd") as HTMLButtonElement | null;
+  if (back) {
+    back.disabled = navPos <= 0;
+    back.addEventListener("click", goBack);
+  }
+  if (fwd) {
+    fwd.disabled = navPos >= navMax;
+    fwd.addEventListener("click", goForward);
+  }
 
   const sidebar = document.getElementById("sidebar");
   const scrim = document.getElementById("scrim");
@@ -470,6 +527,7 @@ function renderSidebar(): void {
     }
     ${nav("browse", "Browse shared")}
     ${nav("artists", "Artists")}
+    ${nav("downloads", `<i class="bi bi-download"></i> Get the app`)}
     ${
       state.me?.isAdmin
         ? `
@@ -518,6 +576,7 @@ function renderSidebar(): void {
         | "linkRequests"
         | "pendingSongs"
         | "editRequests"
+        | "downloads"
         | "settings";
       navigate({ kind });
     });
@@ -552,7 +611,7 @@ function renderSidebar(): void {
 // --- main area -------------------------------------------------------------
 
 async function renderMain(): Promise<void> {
-  const el = document.getElementById("main");
+  const el = document.getElementById("main-content");
   if (!el) return;
 
   const view = state.view;
@@ -566,6 +625,7 @@ async function renderMain(): Promise<void> {
   else if (view.kind === "linkRequests") await renderLinkRequests(el);
   else if (view.kind === "pendingSongs") await renderPendingSongs(el);
   else if (view.kind === "editRequests") await renderEditRequests(el);
+  else if (view.kind === "downloads") await renderDownloadsView(el);
   else if (view.kind === "settings") await renderSettings(el);
   else await renderPlaylistView(el, view.id);
 }
@@ -656,12 +716,19 @@ function renderLibrary(el: HTMLElement): void {
           Hide explicit
         </label>
         <input id="search" class="search" placeholder="Search title or artist" />
+        <button class="btn btn-sm" id="get-app" title="Download the desktop &amp; mobile apps">
+          <i class="bi bi-download"></i> Get the app
+        </button>
       </div>
     </header>
     <div id="songlist">${songTableHtml(shown)}</div>
   `;
 
   wireSongList();
+
+  document
+    .getElementById("get-app")
+    ?.addEventListener("click", () => navigate({ kind: "downloads" }));
 
   document.getElementById("hide-explicit")?.addEventListener("change", (e) => {
     hideExplicit = (e.target as HTMLInputElement).checked;
@@ -684,6 +751,60 @@ function renderLibrary(el: HTMLElement): void {
       list.innerHTML = songTableHtml(rows);
       wireSongList();
     }
+  });
+}
+
+// --- downloads (native apps) ----------------------------------------------
+
+async function renderDownloadsView(el: HTMLElement): Promise<void> {
+  el.innerHTML = `
+    <header class="main-head"><h2>Get the app</h2></header>
+    <p class="empty">Loading…</p>
+  `;
+
+  let data: Awaited<ReturnType<typeof api.getDownloads>>;
+  try {
+    data = await api.getDownloads();
+  } catch {
+    el.innerHTML = `
+      <header class="main-head"><h2>Get the app</h2></header>
+      <p class="empty">Couldn't load the download list. Try again later.</p>
+    `;
+    return;
+  }
+
+  const cards = data.platforms
+    .map(
+      (p) => `
+      <a class="download-card" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">
+        <i class="bi bi-${escapeHtml(p.icon)}"></i>
+        <span class="dl-label">${escapeHtml(p.label)}</span>
+        <span class="dl-file">${escapeHtml(p.filename)}</span>
+        <span class="dl-go"><i class="bi bi-download"></i> Download</span>
+      </a>`,
+    )
+    .join("");
+
+  el.innerHTML = `
+    <header class="main-head"><h2>Get the app</h2></header>
+    <p class="downloads-sub">
+      Stream in any browser, or install the app for Discord Rich Presence, media
+      keys and offline-friendly playback.
+      ${data.tag ? `Latest release: <strong>${escapeHtml(data.codename)}</strong> (${escapeHtml(data.tag)}).` : ""}
+    </p>
+    <div class="downloads-grid">${cards || `<p class="empty">No builds published yet.</p>`}</div>
+    <p class="downloads-foot">
+      <a href="${escapeHtml(data.releaseUrl)}" target="_blank" rel="noopener">Release notes &amp; checksums</a>
+      · <a href="${escapeHtml(data.repoUrl)}" target="_blank" rel="noopener">All versions</a>
+    </p>
+  `;
+
+  // Desktop: a top-level <a> would navigate the Electron webview off the
+  // app, so hand external links to the system browser instead.
+  el.querySelectorAll<HTMLAnchorElement>("a[href^='http']").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      if (openExternal(a.href)) e.preventDefault();
+    });
   });
 }
 

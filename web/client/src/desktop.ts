@@ -61,6 +61,16 @@ export function initDesktopBridge(): void {
   }
 }
 
+// Open a URL outside the app. On desktop this hands off to the system
+// browser (a plain <a href> would navigate the Electron webview away from
+// the app); on web it's a no-op and the caller lets the link behave.
+// Returns true if it handled the open.
+export function openExternal(url: string): boolean {
+  if (!bridge) return false;
+  void bridge.openExternal(url);
+  return true;
+}
+
 // True once a token is stored — lets the UI skip a re-auth on boot.
 export function hasDesktopToken(): boolean {
   try {

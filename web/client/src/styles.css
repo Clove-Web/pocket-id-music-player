@@ -219,6 +219,28 @@ button {
   overflow-y: auto;
 }
 
+/* header back/forward arrows — sticky so they stay put while a view scrolls */
+.nav-arrows {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 0.25rem;
+  margin: -1.5rem -2rem 0.5rem;
+  padding: 0.5rem 2rem;
+  background: var(--bg);
+}
+
+.nav-arrows .icon-btn {
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.nav-arrows .icon-btn:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
 .main-head {
   display: flex;
   justify-content: space-between;
@@ -1278,6 +1300,75 @@ button {
   font-size: 0.75rem;
 }
 
+/* --- downloads ("Get the app") --- */
+
+.downloads-sub {
+  color: var(--muted);
+  max-width: 60ch;
+  margin: -0.25rem 0 1.25rem;
+}
+
+.downloads-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+  max-width: 720px;
+}
+
+.download-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "icon label"
+    "icon file"
+    "go   go";
+  column-gap: 0.75rem;
+  row-gap: 0.15rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.download-card:hover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+
+.download-card > .bi:first-child {
+  grid-area: icon;
+  font-size: 1.6rem;
+  align-self: center;
+  color: var(--accent);
+}
+
+.download-card .dl-label {
+  grid-area: label;
+  font-weight: 600;
+}
+
+.download-card .dl-file {
+  grid-area: file;
+  color: var(--muted);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.download-card .dl-go {
+  grid-area: go;
+  margin-top: 0.6rem;
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+.downloads-foot {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 /* --- responsive --- */
 
 @media (max-width: 768px) {
@@ -1317,6 +1408,14 @@ button {
 
   .main {
     padding: 3.5rem 1rem 1rem;
+  }
+
+  /* static on mobile: sticky would collide with the fixed hamburger */
+  .nav-arrows {
+    position: static;
+    margin: 0 0 0.5rem;
+    padding: 0;
+    background: none;
   }
 
   .main-head {

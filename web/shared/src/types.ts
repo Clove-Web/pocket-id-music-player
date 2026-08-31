@@ -132,3 +132,19 @@ export type Lyrics = {
   synced: SyncedLine[];
   plain: string | null;
 };
+
+export type AppDownloadPlatform = {
+  key: string;
+  label: string;
+  icon: string; // Bootstrap Icons name, without the "bi-" prefix
+  filename: string;
+  url: string;
+};
+
+export type AppDownloads = {
+  codename: string;
+  tag: string;
+  repoUrl: string;
+  releaseUrl: string;
+  platforms: AppDownloadPlatform[];
+};

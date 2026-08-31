@@ -13,6 +13,7 @@ import {
 } from "./auth/middleware.ts";
 import {
   resolveDownload,
+  listLatestDownloads,
   versionNames,
   platformNames,
 } from "./lib/downloads.ts";
@@ -135,6 +136,10 @@ app.get("/download", (c) => {
       return c.redirect(target.url, 302);
   }
 });
+
+// Structured version of the above for the in-app "Get the app" page: every
+// platform's asset URL for the latest release. Open to everyone.
+app.get("/api/downloads", (c) => c.json(listLatestDownloads()));
 
 // Shareable per-song link. Must sit before the SPA catch-all.
 //

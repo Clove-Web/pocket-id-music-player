@@ -44,6 +44,58 @@ function findVersion(name: string): VersionEntry | undefined {
   return Object.values(versions).find((v) => v.tag.toLowerCase() === name);
 }
 
+// Display metadata for the "Get the app" page. Keys match downloads.json's
+// `platforms`; anything not listed falls back to a generic label/icon.
+const PLATFORM_META: Record<string, { label: string; icon: string }> = {
+  windows: { label: "Windows", icon: "windows" },
+  mac: { label: "macOS", icon: "apple" },
+  linux: { label: "Linux · AppImage", icon: "box-seam" },
+  deb: { label: "Linux · Debian / Ubuntu", icon: "ubuntu" },
+  android: { label: "Android · APK", icon: "android2" },
+};
+
+export interface AppDownloadPlatform {
+  key: string;
+  label: string;
+  icon: string;
+  filename: string;
+  url: string;
+}
+
+export interface AppDownloads {
+  codename: string;
+  tag: string;
+  repoUrl: string;
+  releaseUrl: string;
+  platforms: AppDownloadPlatform[];
+}
+
+/**
+ * Every platform's asset URL for whichever version the manifest marks
+ * latest — the data behind the in-app "Get the app" page. Built on top of
+ * resolveDownload() so the filename/override logic lives in one place.
+ */
+export function listLatestDownloads(): AppDownloads {
+  const codename = manifest.latest;
+  const version = findVersion(codename);
+  const tag = version?.tag ?? "";
+
+  const platformList = platformNames.flatMap<AppDownloadPlatform>((key) => {
+    const target = resolveDownload(undefined, key);
+    if (target.kind !== "asset") return [];
+    const meta = PLATFORM_META[key] ?? { label: key, icon: "download" };
+    return [{ key, label: meta.label, icon: meta.icon, filename: target.file, url: target.url }];
+  });
+
+  return {
+    codename,
+    tag,
+    repoUrl,
+    releaseUrl: tag ? `${repoUrl}/releases/tag/${tag}` : repoUrl,
+    platforms: platformList,
+  };
+}
+
 export type DownloadTarget =
   | { kind: "repo"; url: string }
   | { kind: "release"; url: string; tag: string }
