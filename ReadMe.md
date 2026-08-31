@@ -13,6 +13,11 @@ account system.
 
 You can install the app at the [Downloads Page](https://doughmination.me/download)
 
+Also on the AUR:
+```bash
+yay -s doughmination-music
+```
+
 ## Issues
 If you have issues, please join my [Discord Server](https://discord.gg/N8gCjS294R) and I will do my best to support you to the best of my abilities
 
