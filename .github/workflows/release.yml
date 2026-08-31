@@ -81,11 +81,15 @@ jobs:
 
       # electron-updater compares the running app's version against the one in
       # the published latest*.yml, so the packaged build has to carry the tag's
-      # version (the checked-in package.json is only ever a floor).
+      # version (the checked-in package.json is only ever a floor). Edit the
+      # field directly — `npm version` chokes on this repo's `workspace:*`
+      # deps, and npm isn't the package manager here anyway.
       - name: stamp desktop version
         working-directory: apps/desktop
         shell: bash
-        run: npm version --no-git-tag-version --allow-same-version "${VERSION#v}"
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=process.env.VERSION.replace(/^v/,'');fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          node -e "console.log('desktop version =>',require('./package.json').version)"
         env:
           VERSION: ${{ inputs.version || github.ref_name }}
 
