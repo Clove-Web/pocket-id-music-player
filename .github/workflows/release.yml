@@ -319,12 +319,43 @@ jobs:
             git -C /tmp/aurrepo remote add origin "ssh://aur@aur.archlinux.org/$PKGNAME.git"
           fi
 
+          # The AUR clone is the only thing that knows whether this pkgver has
+          # already been published. Re-running the release for a tag rebuilds
+          # the AppImage, and Electron builds are not reproducible — the same
+          # 3.1.0 comes back with a different sha256. Pushing that under an
+          # unchanged pkgver-pkgrel is invisible to AUR helpers: yay sees the
+          # cached build files as up to date, skips re-fetching the PKGBUILD
+          # and then fails its validity check against the old sums. Bumping
+          # pkgrel is the only signal that makes them refresh.
+          if [ -f /tmp/aurrepo/.SRCINFO ]; then
+            _oldver=$(awk -F' = ' '/^[[:space:]]*pkgver = /{print $2; exit}' /tmp/aurrepo/.SRCINFO)
+            _oldrel=$(awk -F' = ' '/^[[:space:]]*pkgrel = /{print $2; exit}' /tmp/aurrepo/.SRCINFO)
+          else
+            _oldver=""; _oldrel=""
+          fi
+
+          if [ "$_oldver" = "$PKGVER" ] && [ -n "$_oldrel" ]; then
+            # Compare at the published pkgrel so an unchanged re-run is a
+            # no-op rather than an endless pkgrel ratchet.
+            sed "s|^pkgrel=.*|pkgrel=$_oldrel|" "$WORK/PKGBUILD" > "$WORK/PKGBUILD.cmp"
+            if cmp -s "$WORK/PKGBUILD.cmp" /tmp/aurrepo/PKGBUILD; then
+              echo "::notice::AUR package already up to date for $PKGVER-$_oldrel"
+              exit 0
+            fi
+            _newrel=$((_oldrel + 1))
+            echo "::notice::$PKGVER is already published as -$_oldrel and the package changed (rebuilt artifact?) — publishing -$_newrel"
+            sed -i "s|^pkgrel=.*|pkgrel=$_newrel|" "$WORK/PKGBUILD"
+            chown builder:builder "$WORK/PKGBUILD"
+            runuser -l builder -c "cd $WORK && makepkg --printsrcinfo > .SRCINFO"
+          fi
+
           cp "$WORK/PKGBUILD" "$WORK/.SRCINFO" /tmp/aurrepo/
           git -C /tmp/aurrepo add PKGBUILD .SRCINFO
           if git -C /tmp/aurrepo diff --cached --quiet; then
             echo "::notice::AUR package already up to date for $PKGVER"
             exit 0
           fi
-          git -C /tmp/aurrepo commit -m "Update to $PKGVER"
+          PKGREL=$(bash -c "source $WORK/PKGBUILD >/dev/null 2>&1; echo \$pkgrel")
+          git -C /tmp/aurrepo commit -m "Update to $PKGVER-$PKGREL"
           git -C /tmp/aurrepo push origin HEAD:master
-          echo "Published $PKGNAME $PKGVER to the AUR"
+          echo "Published $PKGNAME $PKGVER-$PKGREL to the AUR"
