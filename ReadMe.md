@@ -4,10 +4,7 @@
 
 <h1 align="center">Doughmination Music</h1>
 
-A self-hosted music streaming server and player. Upload your library once, then
-play it anywhere — in the browser, on the desktop app, or on Android. Sign-in is
-handled by [Pocket ID](https://pocket-id.org/) (OIDC), so everyone shares one
-account system.
+A music streaming server and player. Free, no-ads, no premiums, streaming at OPUS quality.
 
 ## Installation
 
@@ -19,7 +16,7 @@ yay -s doughmination-music
 ```
 
 ## Issues
-If you have issues, please join my [Discord Server](https://discord.gg/N8gCjS294R) and I will do my best to support you to the best of my abilities
+If you have issues, or would like to request music to be added, please join my [Discord Server](https://discord.gg/N8gCjS294R) and I will do my best to support you to the best of my abilities
 
 ## Contributing
 
