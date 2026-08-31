@@ -72,8 +72,6 @@ export function openExternal(url: string): boolean {
   return true;
 }
 
-<<<<<<< Updated upstream
-=======
 // Last.fm connect on desktop runs entirely in the system browser (same reason
 // as SSO — no passkeys / wrong cookie jar in the webview). It returns via
 // doughmination://lastfm/callback?token=… which initDesktopAuth catches and
@@ -92,7 +90,6 @@ export function startDesktopLastfmConnect(connectUrl: string): boolean {
   return true;
 }
 
->>>>>>> Stashed changes
 // True once a token is stored — lets the UI skip a re-auth on boot.
 export function hasDesktopToken(): boolean {
   try {
