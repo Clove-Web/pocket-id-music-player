@@ -260,6 +260,7 @@ button {
   top: 0;
   z-index: 5;
   display: flex;
+  align-items: center;
   gap: 0.25rem;
   margin: -1.5rem -2rem 0.5rem;
   padding: 0.5rem 2rem;
@@ -269,6 +270,11 @@ button {
 .nav-arrows .icon-btn {
   border: 1px solid var(--border);
   background: var(--panel);
+}
+
+/* sits at the far end of the history bar */
+.nav-get-app {
+  margin-left: auto;
 }
 
 .nav-arrows .icon-btn:disabled {

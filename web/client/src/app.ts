@@ -30,9 +30,15 @@ import {
   openExternal,
   syncDiscordPresence,
 } from "./desktop.ts";
-import { initNative } from "./native.ts";
+import { initNative, isNativeAndroid } from "./native.ts";
 
 initDesktopBridge();
+
+// True when the web app is running inside one of the packaged shells (Electron
+// desktop or the Android WebView) rather than a plain browser tab. Each shell
+// exposes its own bridge global on the window, which is the signal. Used to
+// hide "Get the app" prompts — pointless once you're already in the app.
+const isInsideApp = isDesktop || isNativeAndroid;
 
 const root = document.getElementById("app")!;
 const player = new Player();
@@ -414,6 +420,13 @@ function render(): void {
             <i class="bi bi-chevron-left"></i></button>
           <button class="icon-btn" id="nav-fwd" title="Forward (Alt+Right)" aria-label="Forward">
             <i class="bi bi-chevron-right"></i></button>
+          ${
+            isInsideApp
+              ? ""
+              : `<button class="btn btn-sm nav-get-app" id="nav-get-app" title="Download the desktop &amp; mobile apps">
+                   <i class="bi bi-download"></i> Get the app
+                 </button>`
+          }
         </nav>
         <div id="main-content"></div>
       </main>
@@ -434,6 +447,9 @@ function render(): void {
     fwd.disabled = navPos >= navMax;
     fwd.addEventListener("click", goForward);
   }
+  document
+    .getElementById("nav-get-app")
+    ?.addEventListener("click", () => navigate({ kind: "downloads" }));
 
   const sidebar = document.getElementById("sidebar");
   const scrim = document.getElementById("scrim");
@@ -538,7 +554,6 @@ function renderSidebar(): void {
     }
     ${nav("browse", "Browse shared")}
     ${nav("artists", "Artists")}
-    ${nav("downloads", `<i class="bi bi-download"></i> Get the app`)}
     ${
       state.me?.isAdmin
         ? `
@@ -587,7 +602,6 @@ function renderSidebar(): void {
         | "linkRequests"
         | "pendingSongs"
         | "editRequests"
-        | "downloads"
         | "settings";
       navigate({ kind });
     });
@@ -728,19 +742,12 @@ function renderLibrary(el: HTMLElement): void {
           Hide explicit
         </label>
         <input id="search" class="search" placeholder="Search title or artist" />
-        <button class="btn btn-sm" id="get-app" title="Download the desktop &amp; mobile apps">
-          <i class="bi bi-download"></i> Get the app
-        </button>
       </div>
     </header>
     <div id="songlist">${songTableHtml(shown)}</div>
   `;
 
   wireSongList();
-
-  document
-    .getElementById("get-app")
-    ?.addEventListener("click", () => navigate({ kind: "downloads" }));
 
   document.getElementById("hide-explicit")?.addEventListener("change", (e) => {
     hideExplicit = (e.target as HTMLInputElement).checked;
